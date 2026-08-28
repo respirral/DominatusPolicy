@@ -34,7 +34,7 @@ function Get-HWID {
 }
 
 $hwid = Get-HWID
-$lockFile = Join-Path $env:ProgramData 'dominatus_hwid.json'
+$lockFile = Join-Path $env:ProgramData 'roman_hwid.json'
 
 $locks = @{}
 if (Test-Path $lockFile){
@@ -46,7 +46,7 @@ function Save-Locks { param($tbl,$path)
 
 Clear-Host
 Line ""
-Line "=== Dominatus Recording Policy - Login ===" Yellow
+Line "=== Roman Recording Policy - Login ===" Yellow
 Line ""
 
 $authed = $false
@@ -142,7 +142,7 @@ function Test-Flagged { param([string]$P)
     return $false }
 
 Line ""
-Line "=== Dominatus Recording Policy ===" Yellow
+Line "=== Roman Recording Policy ===" Yellow
 Line "Complete all steps with 100% success to pass." White
 Line "Follow the instructions listed on each step." White
 Line "This PowerShell policy currently has 4 steps." White
@@ -168,7 +168,7 @@ $di=0; foreach ($d in $disks){ $di++; if (Serial-OK $d.SerialNumber){ Line "Disk
 
 Write-Host ""
 Line "=== Credits ===" Yellow
-Line "Made by stayvague" White
+Line "Made by respiral" White
 Write-Host ""
 Wait-ForEnter
 Clear-Host
@@ -275,14 +275,6 @@ try {
     if ($tHit -eq 0){ Note $PASS "Scheduled tasks: $($tasks.Count) third-party, none flagged." }
 } catch { Note $WARN "Scheduled tasks enumeration failed." }
 
-$adsHit=0; $adsN=0
-foreach ($d in @("$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents")){
-    if (-not (Test-Path $d)){ continue }
-    Get-ChildItem $d -File -Force -ErrorAction SilentlyContinue | Select-Object -First 300 | ForEach-Object {
-        try { $st=Get-Item $_.FullName -Stream * -ErrorAction SilentlyContinue | Where-Object { $_.Stream -ne ':$DATA' -and $_.Stream -ne 'Zone.Identifier' }; foreach ($s in $st){ $adsHit++; Note $WARN "ADS unusual stream '$($s.Stream)' on $($_.Name)" } } catch {}
-        $adsN++ } }
-if ($adsHit -eq 0){ Note $PASS "Alternate Data Streams: $adsN files checked, none hiding data." }
-
 $dl="$env:USERPROFILE\Downloads"
 if (Test-Path $dl){
     $dHit=0; $dN=0
@@ -322,21 +314,13 @@ foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)){
     $nm = if ($path){ $path } else { "$($proc.ProcessName).exe" }
     if (Test-Flagged $nm){ $pHit++; Note $FAIL "Process flagged LIVE -> $($proc.ProcessName) (PID $($proc.Id)) $(if($path){"at $path"}else{'[path hidden]'})" }
     if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')){ $userProcs += $path }
-    if ((Get-Date) - $procScanStart -gt [TimeSpan]::FromSeconds(15)) { break }
+    if ((Get-Date) - $procScanStart -gt [TimeSpan]::FromSeconds(5)) { break }
 }
 if ($pHit -eq 0){ Note $PASS "Processes: $pN running, none flagged." }
 
 $uHit=0
 foreach ($up in ($userProcs | Select-Object -Unique)){ if (-not (Fast-SigValid $up)){ $uHit++; Note $WARN "Process unsigned binary from user space -> $up" } }
 if ($uHit -eq 0){ Note $PASS "Processes: none unsigned from temp/user dirs." }
-
-Line "Verifying Windows system files (this can take a minute)..." Yellow
-try {
-    $sfc = & sfc /verifyonly 2>&1 | Out-String
-    if ($sfc -match 'did not find any integrity violations'){ Note $PASS "System files: SFC found no integrity violations." }
-    elseif ($sfc -match 'found.*integrity violations'){ Note $FAIL "System files: SFC found integrity violations - protected files modified." }
-    else { Note $WARN "System files: SFC could not complete verification." }
-} catch { Note $WARN "System files: SFC check failed to run." }
 
 try {
     $pref=Get-MpPreference -ErrorAction Stop
@@ -358,11 +342,6 @@ try {
     if ($st.IsTamperProtected){ Note $PASS "Defender tamper protection ON." } else { Note $WARN "Defender tamper protection OFF." }
     $age=[int]$st.AntivirusSignatureAge; if ($age -le 7){ Note $PASS "Defender signatures $age day(s) old." } else { Note $WARN "Defender signatures $age days old - stale." }
 } catch { Note $WARN "Defender status query failed." }
-
-try {
-    $de=Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational';Id=5001,5007} -MaxEvents 10 -ErrorAction Stop
-    foreach ($e in $de){ Note $WARN "Defender config/RTP change event $($e.Id) at $($e.TimeCreated.ToString('yyyy-MM-dd HH:mm'))" }
-} catch { Note $PASS "Defender no protection-disable events logged." }
 
 try {
     $bcd = & bcdedit /enum "{current}" 2>&1 | Out-String
@@ -391,45 +370,25 @@ Wait-ForEnter
 Clear-Host
 
 Line "Step 4 of 4: Tamper Check" White
-Line "INSTRUCTION: Open Process Explorer, then press Enter to start tamper check" Yellow
+Line "INSTRUCTION: Process Explorer will open automatically" Yellow
 Write-Host ""
 Line "Launching Process Explorer..." White
+$procExp = $null
 try {
     $procExp = Start-Process -FilePath "procexp.exe" -PassThru -ErrorAction Stop
 } catch {
     try {
         $procExp = Start-Process -FilePath "procexp64.exe" -PassThru -ErrorAction Stop
     } catch {
-        Line "Process Explorer not found in PATH. Please download from Sysinternals." Red
-        Wait-ForEnter
-        Clear-Host
-        Line "=== Final Result ===" Yellow
-        Write-Host ""
-        $tot=$Results.Count
-        $p=@($Results|Where-Object{$_.State -eq 'Pass'}).Count
-        $w=@($Results|Where-Object{$_.State -eq 'Unsure'}).Count
-        $f=@($Results|Where-Object{$_.State -eq 'Fail'}).Count
-        Line ("Passed:  $p / $tot") Green
-        Line ("Unsure:  $w / $tot") Yellow
-        Line ("Failed:  $f / $tot") Red
-        Write-Host ""
-        if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
-        elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
-        else { Line "VERDICT: PASS" Green }
-        Write-Host ""
-        Line "=== Credits ===" Yellow
-        Line "Made by stayvague" White
-        Wait-ForEnter "Press Enter to exit"
-        exit
+        Line "Process Explorer not found. Using tasklist fallback." Yellow
     }
 }
-Line "Process Explorer opened. Please review running processes." White
-Wait-ForEnter "Press Enter to start tamper check (5 seconds max)"
+Start-Sleep -Seconds 2
 $s4=$Results.Count
 
 $tamperHit=0
 $tamperScanStart = Get-Date
-Line "Scanning for high-virus flagged processes..." Yellow
+Line "Scanning for high-virus flagged processes (5 seconds max)..." Yellow
 while ((Get-Date) - $tamperScanStart -lt [TimeSpan]::FromSeconds(5)) {
     $procs = Get-Process -ErrorAction SilentlyContinue
     $found = $false
@@ -473,6 +432,6 @@ elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach (
 else { Line "VERDICT: PASS" Green }
 Write-Host ""
 Line "=== Credits ===" Yellow
-Line "Made by stayvague" White
+Line "Made by respiral" White
 Wait-ForEnter "Press Enter to exit"
 exit
