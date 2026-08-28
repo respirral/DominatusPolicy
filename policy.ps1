@@ -84,15 +84,23 @@ function Show-LoadingBar {
     for ($i=0; $i -le 10; $i++){
         $bar = "#"*$i + "-"*(10-$i)
         Write-Host -NoNewline ("`rProgress: [ $bar ] {0}% " -f ($i*10)) -ForegroundColor White
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 120
+    }
+    Write-Host ""; Write-Host ""
+}
+function Show-LoadingBarFast {
+    for ($i=0; $i -le 10; $i++){
+        $bar = "#"*$i + "-"*(10-$i)
+        Write-Host -NoNewline ("`rProgress: [ $bar ] {0}% " -f ($i*10)) -ForegroundColor White
+        Start-Sleep -Milliseconds 50
     }
     Write-Host ""; Write-Host ""
 }
 function Wait-ForEnter {
     param([string]$Message = "Press Enter to Continue")
-    Start-Sleep -Seconds 0.5
+    Start-Sleep -Seconds 1
     Line $Message Yellow
-    while ($true){ if ([Console]::KeyAvailable){ if ([Console]::ReadKey($true).Key -eq 'Enter'){ break } } Start-Sleep -Milliseconds 50 }
+    while ($true){ if ([Console]::KeyAvailable){ if ([Console]::ReadKey($true).Key -eq 'Enter'){ break } } Start-Sleep -Milliseconds 100 }
 }
 
 $SigCache = @{}
@@ -124,26 +132,13 @@ function Write-Section {
     }
 }
 
-# ============================================================
-# CHEAT-ONLY FLAGGED LIST (removed nc.exe, plink.exe, putty.exe, wireshark, netcat, procdump, etc.)
-# ============================================================
-$Flagged = @(
-    'spectre.exe',
-    'software.exe',
-    'tiworker.exe',
-    'loader.exe',
-    'injector.exe',
-    'bamparser.exe',
-    'svhost.exe',
-    'csrss32.exe',
-    'mimikatz.exe'
-)
+$Flagged = @('spectre.exe','software.exe','tiworker.exe','loader.exe','injector.exe','bamparser.exe','svhost.exe','csrss32.exe','mimikatz.exe','meterpreter.exe','cobaltstrike.exe','beacon.exe','payload.exe','backdoor.exe','rat.exe','keylogger.exe','spy.exe','trojan.exe','virus.exe','worm.exe','rootkit.exe','stealer.exe','cryptominer.exe','ransomware.exe','exploit.exe')
 
 function Test-Flagged { param([string]$P)
     if (-not $P) { return $false }
     $leaf = try { (Split-Path $P -Leaf).ToLower() } catch { $P.ToLower() }
     foreach ($f in $Flagged){
-        if ($leaf -eq $f){
+        if ($leaf -eq $f -or $leaf -like "*$f" -or $leaf -like "$f*"){
             if ($f -eq 'tiworker.exe'){
                 if (-not (Test-Path $P -ErrorAction SilentlyContinue)){ return $false }
                 if (Fast-SigMicrosoft $P){ return $false }
@@ -186,9 +181,6 @@ Write-Host ""
 Wait-ForEnter
 Clear-Host
 
-# ============================================================
-# STEP 1: Execution History
-# ============================================================
 Line "Step 1 of 4: Execution History" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
@@ -252,14 +244,56 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-# ============================================================
-# STEP 2: Persistence, Storage & Traces (REMOVED STARTUP APP SCANNING)
-# ============================================================
-Line "Step 2 of 4: Storage & Traces" White
+Line "Step 2 of 4: Tamper Check (Process Explorer)" White
+Line "INSTRUCTION: Open Process Explorer manually and reach 100% success" Yellow
+Write-Host ""
+Line "Opening Process Explorer..." Cyan
+Start-Process "procexp.exe" -ErrorAction SilentlyContinue -WindowStyle Normal
+Start-Sleep -Seconds 2
+Line "Process Explorer opened. Verify running processes manually." Cyan
+Line "Press Enter when ready to start automated tamper check (5 seconds max)..." Yellow
+Wait-ForEnter "Press Enter to start tamper check"
+$s2=$Results.Count
+
+$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$timeout = 5000
+$virusHit = 0
+$procChecked = 0
+
+while ($stopwatch.ElapsedMilliseconds -lt $timeout) {
+    $procs = Get-Process -ErrorAction SilentlyContinue
+    $procChecked = $procs.Count
+    foreach ($p in $procs) {
+        $path = $null
+        try { $path = $p.MainModule.FileName } catch { $path = $null }
+        $nm = if ($path) { $path } else { "$($p.ProcessName).exe" }
+        if (Test-Flagged $nm) {
+            $virusHit++
+            Note $FAIL "HIGH VIRUS FLAG: Process $($p.ProcessName) (PID $($p.Id)) at $(if($path){"$path"}else{'[path hidden]'})"
+        }
+    }
+    Start-Sleep -Milliseconds 200
+}
+$stopwatch.Stop()
+
+if ($virusHit -eq 0) {
+    Note $PASS "Tamper check: $procChecked processes scanned, zero flagged."
+} else {
+    Note $FAIL "Tamper check found $virusHit flagged processes."
+}
+Write-Section $s2
+$sub=$Results | Select-Object -Skip $s2
+$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
+Write-Host ""
+Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
+Wait-ForEnter
+Clear-Host
+
+Line "Step 3 of 4: Persistence, Storage & Traces" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-Show-LoadingBar
-$s2=$Results.Count
+Show-LoadingBarFast
+$s3=$Results.Count
 
 try {
     $usn = & fsutil usn queryjournal C: 2>&1
@@ -271,6 +305,28 @@ foreach ($pair in @(@('Security',1102),@('System',104))){
     try { $ev=Get-WinEvent -FilterHashtable @{LogName=$pair[0];Id=$pair[1]} -MaxEvents 5 -ErrorAction Stop; foreach ($e in $ev){ Note $FAIL "Event log '$($pair[0])' CLEARED at $($e.TimeCreated.ToString('yyyy-MM-dd HH:mm'))" } }
     catch { Note $PASS "Event log: no clear events in '$($pair[0])'." }
 }
+
+$runKeys=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce')
+$arHit=0; $arN=0
+foreach ($k in $runKeys){
+    if (-not (Test-Path $k)){ continue }
+    $p=Get-ItemProperty $k -ErrorAction SilentlyContinue; if (-not $p){ continue }
+    $p.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { $arN++; $v="$($_.Value)"
+        if (Test-Flagged $v){ $arHit++; Note $FAIL "Autorun flagged entry '$($_.Name)' -> $v" }
+        else { $exe = if ($v -match '"([^"]+\.exe)"'){$matches[1]} elseif ($v -match '([A-Za-z]:\\[^ ]+\.exe)'){$matches[1]} else {$null}
+            if ($exe -and (Test-Path $exe)){ if (-not (Fast-SigValid $exe)){ $arHit++; Note $WARN "Autorun unsigned startup '$($_.Name)' -> $exe" } } } } }
+if ($arHit -eq 0){ Note $PASS "Autoruns: $arN Run/RunOnce entries, all clean." }
+
+$stHit=0
+foreach ($d in @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup","$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup")){
+    if (Test-Path $d){ Get-ChildItem $d -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object { if (Test-Flagged $_.Name){ $stHit++; Note $FAIL "Startup folder flagged -> $($_.FullName)" } } } }
+if ($stHit -eq 0){ Note $PASS "Startup folders clean." }
+
+try {
+    $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' -and $_.State -ne 'Disabled' }); $tHit=0
+    foreach ($t in $tasks){ foreach ($a in ($t.Actions|Where-Object{$_.Execute})){ if (Test-Flagged $a.Execute){ $tHit++; Note $FAIL "Task '$($t.TaskName)' runs flagged -> $($a.Execute)" } } }
+    if ($tHit -eq 0){ Note $PASS "Scheduled tasks: $($tasks.Count) third-party, none flagged." }
+} catch { Note $WARN "Scheduled tasks enumeration failed." }
 
 $adsHit=0; $adsN=0
 foreach ($d in @("$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents")){
@@ -297,113 +353,6 @@ try {
     if ($rHit -eq 0){ Note $PASS "Recycle Bin: $($rb.Count) items, none flagged." }
 } catch { Note $WARN "Recycle Bin could not enumerate." }
 
-Write-Section $s2
-$sub=$Results | Select-Object -Skip $s2
-$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
-Write-Host ""
-Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
-Wait-ForEnter
-Clear-Host
-
-# ============================================================
-# STEP 3: BAM & Amcache - Deep Scan (KEPT AS-IS)
-# ============================================================
-Line "Step 3 of 4: BAM & Amcache - Deep Scan" White
-Line "INSTRUCTION: Complete scan of BAM, Amcache, and artifacts" Yellow
-Write-Host ""
-Show-LoadingBar
-$s3=$Results.Count
-
-$startTime3 = Get-Date
-$entropyHit = 0
-$flaggedHit = 0
-$bamChecked = 0
-$bamHighEntropy = 0
-
-function Get-Entropy {
-    param([byte[]]$Data)
-    if (-not $Data -or $Data.Length -lt 4) { return 0 }
-    $freq = @{}
-    foreach ($b in $Data) {
-        if ($freq.ContainsKey($b)) { $freq[$b]++ } else { $freq[$b] = 1 }
-    }
-    $len = $Data.Length
-    $entropy = 0.0
-    foreach ($count in $freq.Values) {
-        $p = $count / $len
-        $entropy -= $p * [math]::Log($p, 2)
-    }
-    return $entropy
-}
-
-while (((Get-Date) - $startTime3).TotalSeconds -lt 15) {
-    foreach ($root in @('HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings','HKLM:\SYSTEM\CurrentControlSet\Services\bam\UserSettings')){
-        if (((Get-Date) - $startTime3).TotalSeconds -gt 15) { break }
-        if (-not (Test-Path $root)){ continue }
-        Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
-            if (((Get-Date) - $startTime3).TotalSeconds -gt 15) { return }
-            $p=Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-            if (-not $p){ return }
-            $p.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' -and $_.Name -match '\.exe$' } | ForEach-Object {
-                $bamChecked++
-                if (Test-Flagged $_.Name) {
-                    $flaggedHit++
-                    Note $FAIL "BAM flagged file: $(Split-Path $_.Name -Leaf)"
-                }
-                try {
-                    $val = $_.Value
-                    if ($val -is [byte[]] -and $val.Length -gt 16) {
-                        $ent = Get-Entropy $val
-                        if ($ent -gt 6.5) {
-                            $bamHighEntropy++
-                            Note $WARN "BAM high entropy entry: $(Split-Path $_.Name -Leaf) (entropy: $([math]::Round($ent,2)))"
-                        }
-                    }
-                } catch {}
-            }
-        }
-    }
-    
-    if (((Get-Date) - $startTime3).TotalSeconds -lt 15) {
-        $amcachePath = "$env:SystemRoot\AppCompat\Programs\Amcache.hve"
-        if (Test-Path $amcachePath) {
-            try {
-                $amSize = (Get-Item $amcachePath -Force).Length
-                if ($amSize -gt 0) {
-                    Note $PASS "Amcache present: $([math]::Round($amSize/1MB,2))MB"
-                }
-            } catch {}
-        } else {
-            Note $WARN "Amcache hive missing"
-        }
-    }
-    
-    if (((Get-Date) - $startTime3).TotalSeconds -lt 15) {
-        $pfDir = "$env:SystemRoot\Prefetch"
-        if (Test-Path $pfDir) {
-            $pfFiles = @(Get-ChildItem $pfDir -Filter *.pf -Force -ErrorAction SilentlyContinue | Select-Object -First 200)
-            foreach ($pf in $pfFiles) {
-                $n = ($pf.BaseName -replace '-[0-9A-F]{8}$','')
-                if (Test-Flagged $n) {
-                    $flaggedHit++
-                    Note $FAIL "Prefetch flagged: $n"
-                }
-            }
-        }
-    }
-    
-    if (((Get-Date) - $startTime3).TotalSeconds -ge 15) { break }
-    Start-Sleep -Milliseconds 50
-}
-
-if ($flaggedHit -eq 0 -and $bamHighEntropy -eq 0) {
-    Note $PASS "BAM & Amcache: $bamChecked entries checked, no flagged/high-entropy files."
-} elseif ($flaggedHit -gt 0) {
-    Note $FAIL "BAM/Amcache: $flaggedHit flagged file(s) found!"
-} else {
-    Note $WARN "BAM: $bamHighEntropy high-entropy entries found"
-}
-
 Write-Section $s3
 $sub=$Results | Select-Object -Skip $s3
 $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
@@ -412,72 +361,89 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-# ============================================================
-# STEP 4: Tamper Check - AUTO DOWNLOAD + LAUNCH Process Explorer
-# ============================================================
-Line "Step 4 of 4: Tamper Check" White
-Line "INSTRUCTION: Downloading & scanning with Process Explorer" Yellow
+Line "Step 4 of 4: Live System & Defence Integrity" White
+Line "INSTRUCTION: Reach 100% success (max 15 seconds)" Yellow
 Write-Host ""
-
-$tempProcexp = "$env:TEMP\procexp.exe"
-$downloadUrl = "https://live.sysinternals.com/tools/procexp.exe"
-
-if (-not (Test-Path $tempProcexp)) {
-    Line "📥 Downloading Process Explorer from Microsoft..." Yellow
-    try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempProcexp -UseBasicParsing -ErrorAction Stop
-        Line "✅ Downloaded to: $tempProcexp" Green
-    } catch {
-        Line "❌ Download failed: $_" Red
-        Line "   Manually download from: https://docs.microsoft.com/en-us/sysinternals/downloads/process-explorer" Yellow
-    }
-}
-
-if (Test-Path $tempProcexp) {
-    Start-Process -FilePath $tempProcexp -WindowStyle Normal
-    Line "✅ Process Explorer launched from temp" Green
-} else {
-    Line "⚠️ Process Explorer not available. Skipping auto-launch." Yellow
-}
-
-Start-Sleep -Seconds 2
-Line "🔍 Scanning running processes for flagged items..." Yellow
+Show-LoadingBarFast
 $s4=$Results.Count
+$timeoutFast = $true
 
-$startTime4 = Get-Date
-$pHit=0
-$scanned=0
-$flagHit=0
-
-while (((Get-Date) - $startTime4).TotalSeconds -lt 5) {
-    try {
-        $procs = Get-Process -ErrorAction SilentlyContinue
-        foreach ($proc in $procs) {
-            $scanned++
-            $path = $null
-            try { $path = $proc.MainModule.FileName } catch { $path = $null }
-            $nm = if ($path) { $path } else { "$($proc.ProcessName).exe" }
-            
-            if (Test-Flagged $nm) {
-                $flagHit++
-                Note $FAIL "FLAGGED PROCESS: $($proc.ProcessName) (PID $($proc.Id))"
-            }
-            
-            if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')) {
-                if (-not (Fast-SigValid $path)) {
-                    Note $WARN "Unsigned process from user space: $($proc.ProcessName) at $path"
-                }
-            }
-        }
-    } catch {}
-    Start-Sleep -Milliseconds 50
+$pHit=0; $pN=0; $userProcs=@()
+$procScanStop = [System.Diagnostics.Stopwatch]::StartNew()
+$procTimeout = 15000
+$procsDone = $false
+while ($procScanStop.ElapsedMilliseconds -lt $procTimeout -and -not $procsDone) {
+    $procs = Get-Process -ErrorAction SilentlyContinue
+    $pN = $procs.Count
+    foreach ($proc in $procs) {
+        $path=$null
+        try { $path = $proc.MainModule.FileName } catch { $path=$null }
+        $nm = if ($path){ $path } else { "$($proc.ProcessName).exe" }
+        if (Test-Flagged $nm){ $pHit++; Note $FAIL "Process flagged LIVE -> $($proc.ProcessName) (PID $($proc.Id)) $(if($path){"at $path"}else{'[path hidden]'})" }
+        if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')){ $userProcs += $path }
+    }
+    $procsDone = $true
+    break
 }
+$procScanStop.Stop()
+if ($pHit -eq 0){ Note $PASS "Processes: $pN running, none flagged." }
 
-if ($flagHit -eq 0) {
-    Note $PASS "Tamper Check: No flagged processes found ($scanned checked)"
-} else {
-    Note $FAIL "Tamper Check: $flagHit flagged process(es) found!"
-}
+$uHit=0
+$userProcs = $userProcs | Select-Object -Unique
+foreach ($up in $userProcs){ if (-not (Fast-SigValid $up)){ $uHit++; Note $WARN "Process unsigned binary from user space -> $up" } }
+if ($uHit -eq 0){ Note $PASS "Processes: none unsigned from temp/user dirs." }
+
+Line "Verifying Windows system files (fast mode)..." Yellow
+try {
+    $sfc = & sfc /verifyonly 2>&1 | Out-String
+    if ($sfc -match 'did not find any integrity violations'){ Note $PASS "System files: SFC found no integrity violations." }
+    elseif ($sfc -match 'found.*integrity violations'){ Note $FAIL "System files: SFC found integrity violations - protected files modified." }
+    else { Note $WARN "System files: SFC could not complete verification." }
+} catch { Note $WARN "System files: SFC check failed to run." }
+
+try {
+    $pref=Get-MpPreference -ErrorAction Stop
+    $ex=@(); $ex+=$pref.ExclusionPath; $ex+=$pref.ExclusionProcess; $ex+=$pref.ExclusionExtension; $ex+=$pref.ExclusionIpAddress; $ex=$ex|Where-Object{$_}
+    if ($ex.Count){ foreach($e in $ex){ Note $FAIL "Defender exclusion set -> $e" } } else { Note $PASS "Defender: no exclusions of any type." }
+} catch { Note $WARN "Defender could not read exclusions." }
+
+$exR='HKLM:\SOFTWARE\Microsoft\Windows Defender\Exclusions'
+if (Test-Path $exR){
+    $rHit=0
+    Get-ChildItem $exR -ErrorAction SilentlyContinue | ForEach-Object { $p=Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue; if ($p){ $p.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { $rHit++; Note $FAIL "Defender registry exclusion -> $($_.Name)" } } }
+    if ($rHit -eq 0){ Note $PASS "Defender registry exclusions empty." }
+} else { Note $PASS "Defender no exclusion registry keys." }
+
+try {
+    $st=Get-MpComputerStatus -ErrorAction Stop
+    if ($st.RealTimeProtectionEnabled){ Note $PASS "Defender real-time protection ON." } else { Note $FAIL "Defender real-time protection OFF." }
+    if ($st.AntivirusEnabled){ Note $PASS "Defender antivirus engine enabled." } else { Note $FAIL "Defender antivirus engine disabled." }
+    if ($st.IsTamperProtected){ Note $PASS "Defender tamper protection ON." } else { Note $WARN "Defender tamper protection OFF." }
+    $age=[int]$st.AntivirusSignatureAge; if ($age -le 7){ Note $PASS "Defender signatures $age day(s) old." } else { Note $WARN "Defender signatures $age days old - stale." }
+} catch { Note $WARN "Defender status query failed." }
+
+try {
+    $de=Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational';Id=5001,5007} -MaxEvents 10 -ErrorAction Stop
+    foreach ($e in $de){ Note $WARN "Defender config/RTP change event $($e.Id) at $($e.TimeCreated.ToString('yyyy-MM-dd HH:mm'))" }
+} catch { Note $PASS "Defender no protection-disable events logged." }
+
+try {
+    $bcd = & bcdedit /enum "{current}" 2>&1 | Out-String
+    if ($bcd -match 'testsigning\s+Yes'){ Note $FAIL "Boot test signing enabled." } else { Note $PASS "Boot test signing off." }
+    if ($bcd -match 'nointegritychecks\s+Yes'){ Note $FAIL "Boot integrity checks disabled." } else { Note $PASS "Boot integrity checks on." }
+    if ($bcd -match 'debug\s+Yes'){ Note $WARN "Boot kernel debugging enabled." } else { Note $PASS "Boot kernel debugging off." }
+} catch { Note $WARN "Boot bcdedit read failed." }
+
+try {
+    $hv=Get-ItemPropertyValue 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' -Name Enabled -ErrorAction Stop
+    if ($hv -eq 1){ Note $PASS "Memory Integrity (HVCI) ON." } else { Note $WARN "Memory Integrity (HVCI) OFF." }
+} catch { Note $WARN "Memory Integrity not supported or unreadable." }
+
+try {
+    $drv=@(Get-CimInstance Win32_SystemDriver -ErrorAction Stop | Where-Object { $_.State -eq 'Running' }); $dHit=0
+    foreach ($d in $drv){ $pp=$d.PathName -replace '^\\\??\\',''; if ($pp -and (Test-Path $pp -ErrorAction SilentlyContinue)){ if (-not (Fast-SigValid $pp)){ $dHit++; Note $WARN "Driver invalid signature -> $($d.Name)" } } }
+    if ($dHit -eq 0){ Note $PASS "Drivers: $($drv.Count) running, all validly signed." }
+} catch { Note $WARN "Drivers enumeration failed." }
 
 Write-Section $s4
 $sub=$Results | Select-Object -Skip $s4
@@ -487,9 +453,6 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-# ============================================================
-# FINAL RESULT
-# ============================================================
 Line "=== Final Result ===" Yellow
 Write-Host ""
 $tot=$Results.Count
@@ -501,13 +464,4 @@ Line ("Unsure:  $w / $tot") Yellow
 Line ("Failed:  $f / $tot") Red
 Write-Host ""
 if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
-elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
-else { Line "VERDICT: PASS" Green }
-Write-Host ""
-Line "=== Credits ===" Yellow
-Line "Made by stayvague" White
-Wait-ForEnter "Press Enter to exit"
-
-# Cleanup temp procexp after exit
-Remove-Item "$env:TEMP\procexp.exe" -Force -ErrorAction SilentlyContinue
-exit
+elseif ($w -gt 0){ Line "VERDICT:
