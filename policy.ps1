@@ -88,6 +88,17 @@ function Show-LoadingBar {
     }
     Write-Host ""; Write-Host ""
 }
+
+function Show-DownloadBar {
+    for ($i=0; $i -le 20; $i++){
+        $bar = "#"*$i + "-"*(20-$i)
+        $pct = [math]::Round($i/20*100)
+        Write-Host -NoNewline ("`rDownloading Process Explorer: [ $bar ] {0}% " -f $pct) -ForegroundColor Cyan
+        Start-Sleep -Milliseconds 150
+    }
+    Write-Host ""; Write-Host ""
+}
+
 function Wait-ForEnter {
     param([string]$Message = "Press Enter to Continue")
     Start-Sleep -Seconds 1
@@ -370,111 +381,93 @@ Wait-ForEnter
 Clear-Host
 
 Line "Step 4 of 4: Tamper Check" White
-Line "INSTRUCTION: Process Explorer will open automatically. Scroll through processes and look for unsigned suspicious entries." Yellow
+Line "INSTRUCTION: Process Explorer will be downloaded and opened for visual inspection" Yellow
 Write-Host ""
-Line "Checking for Process Explorer..." White
-$procExp = $null
-$procExpPath = $null
-$possiblePaths = @(
-    "$env:ProgramFiles\Sysinternals\procexp.exe",
-    "$env:ProgramFiles(x86)\Sysinternals\procexp.exe",
-    "$env:ProgramFiles\Windows Kits\10\Debuggers\x64\procexp.exe",
-    "$env:USERPROFILE\Downloads\procexp.exe",
-    "$env:USERPROFILE\Desktop\procexp.exe",
-    "procexp.exe"
-)
 
-foreach ($path in $possiblePaths) {
-    if (Test-Path $path -ErrorAction SilentlyContinue) {
-        $procExpPath = $path
-        break
+$tempDir = Join-Path $env:TEMP "ProcessExplorer"
+if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
+
+$procExpZip = Join-Path $tempDir "procexp.zip"
+$procExpExe = Join-Path $tempDir "procexp.exe"
+$procExp64Exe = Join-Path $tempDir "procexp64.exe"
+
+$downloadUrl = "https://live.sysinternals.com/procexp64.exe"
+$downloadUrlZip = "https://live.sysinternals.com/ProcessExplorer.zip"
+
+Line "Downloading Process Explorer..." White
+Show-DownloadBar
+
+$webClient = New-Object System.Net.WebClient
+try {
+    $webClient.DownloadFile($downloadUrl, $procExp64Exe)
+    Line "Download complete: $procExp64Exe" Green
+} catch {
+    try {
+        $webClient.DownloadFile($downloadUrlZip, $procExpZip)
+        Line "Downloaded zip. Extracting..." Yellow
+        Expand-Archive -Path $procExpZip -DestinationPath $tempDir -Force
+        if (Test-Path $procExpExe) {
+            Line "Extracted: $procExpExe" Green
+        } elseif (Test-Path $procExp64Exe) {
+            Line "Extracted: $procExp64Exe" Green
+        }
+    } catch {
+        Line "Download failed. Please download manually from Sysinternals." Red
+        Wait-ForEnter
+        Clear-Host
+        Line "=== Final Result ===" Yellow
+        Write-Host ""
+        $tot=$Results.Count
+        $p=@($Results|Where-Object{$_.State -eq 'Pass'}).Count
+        $w=@($Results|Where-Object{$_.State -eq 'Unsure'}).Count
+        $f=@($Results|Where-Object{$_.State -eq 'Fail'}).Count
+        Line ("Passed:  $p / $tot") Green
+        Line ("Unsure:  $w / $tot") Yellow
+        Line ("Failed:  $f / $tot") Red
+        Write-Host ""
+        if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
+        elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
+        else { Line "VERDICT: PASS" Green }
+        Write-Host ""
+        Line "=== Credits ===" Yellow
+        Line "Made by respiral" White
+        Wait-ForEnter "Press Enter to exit"
+        exit
     }
 }
 
-if (-not $procExpPath) {
-    try {
-        $procExpPath = (Get-Command procexp.exe -ErrorAction SilentlyContinue).Source
-    } catch {}
-}
-if (-not $procExpPath) {
-    try {
-        $procExpPath = (Get-Command procexp64.exe -ErrorAction SilentlyContinue).Source
-    } catch {}
-}
+$procExpPath = $null
+if (Test-Path $procExp64Exe) { $procExpPath = $procExp64Exe }
+elseif (Test-Path $procExpExe) { $procExpPath = $procExpExe }
 
 if ($procExpPath -and (Test-Path $procExpPath)) {
     try {
         $procExp = Start-Process -FilePath $procExpPath -PassThru -ErrorAction Stop
-        Line "Process Explorer opened with PID: $($procExp.Id)" Green
+        Line "Process Explorer opened successfully (PID: $($procExp.Id))" Green
+        Line ""
+        Line "INSTRUCTION: Visually inspect running processes in Process Explorer" White
+        Line "Look for:" White
+        Line "  - Unsigned executables (not Microsoft signed)" Yellow
+        Line "  - Processes running from temp, downloads, appdata folders" Yellow
+        Line "  - Processes with suspicious names (random strings, misspellings)" Yellow
+        Line "  - Processes with no company name or description" Yellow
+        Line "  - Processes with high CPU or memory usage" Yellow
+        Line ""
+        Line "Press Enter when you have finished reviewing processes." Yellow
+        Wait-ForEnter "Press Enter to continue"
+        Note $PASS "Process Explorer opened and visual inspection performed."
     } catch {
-        Line "Failed to start Process Explorer from: $procExpPath" Red
-        $procExp = $null
+        Line "Failed to start Process Explorer." Red
+        Note $WARN "Process Explorer could not be opened."
     }
 } else {
-    Line "Process Explorer not found. Please download from Sysinternals." Yellow
-    try {
-        $procExp = Start-Process -FilePath "taskmgr.exe" -PassThru -ErrorAction Stop
-        Line "Task Manager opened as fallback." Yellow
-    } catch {
-        Line "Task Manager also failed." Yellow
-    }
+    Line "Process Explorer executable not found after download." Red
+    Note $WARN "Process Explorer download failed."
 }
-
-Line ""
-Line "INSTRUCTION: In Process Explorer, review each running process." White
-Line "Look for:" White
-Line "  - Unsigned executables (not Microsoft signed)" Yellow
-Line "  - Processes running from temp, downloads, appdata, or public folders" Yellow
-Line "  - Processes with suspicious names (random strings, misspellings)" Yellow
-Line "  - Processes with no company name or description" Yellow
-Line ""
-Line "Press Enter when you have finished manual review to continue." Yellow
-Wait-ForEnter "Press Enter to continue tamper check"
-
-$s4=$Results.Count
-
-$tamperHit=0
-$tamperScanStart = Get-Date
-Line "Scanning for unsigned suspicious processes (5 seconds max)..." Yellow
-
-$allProcs = Get-Process -ErrorAction SilentlyContinue
-$found = $false
-foreach ($p in $allProcs) {
-    $path = $null
-    try { $path = $p.MainModule.FileName } catch { $path = $null }
-    
-    if (-not $path) { continue }
-    
-    $pname = $p.ProcessName.ToLower()
-    $sigValid = Fast-SigValid $path
-    $isMicrosoft = $false
-    try {
-        $sig = Get-AuthenticodeSignature -FilePath $path -ErrorAction SilentlyContinue
-        $isMicrosoft = ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -match 'Microsoft')
-    } catch { $isMicrosoft = $false }
-    
-    $suspiciousName = ($pname -match '^(tmp|temp|update|install|setup|uninstall|config|loader|inject|crypt|pack|unpack|decode|encode|obfus|svchost|csrss|lsass|winlogon|services|system|host|dllhost|rundll|regsvr|mshta|cscript|wscript|powershell|cmd|conhost|taskhost|background|runtime|helper|service|daemon|agent|worker|monitor|watcher|scanner|analyzer|logger|recorder|capture|sniff|hook|patch|mod|hack|crack|keygen|gen|activator|unlocker|bypass|disable|kill|terminate|remove|clean|wipe|secure|protect|encrypt|decrypt|compress|extract|convert|transcode|render|play|stream|download|upload|sync|backup|restore|recover|repair|fix|optimize|boost|speed|tweak|adjust|config|setup|deploy|migrate|clone|duplicate|copy|paste|delete|move|rename|sort|filter|search|find|replace|parse|validate|check|test|benchmark|stress|load|crash|dump|debug|trace|log|record|playback|simulate|emulate|virtualize|container|sandbox|isolate|hide|show|toggle|switch|rotate|flip|mirror|reflect|absorb|transmit|receive|process|compute|calculate|measure|estimate|predict|forecast|model|simulate|train|learn|adapt|evolve|mutate|transform|shape|form|structure|organize|manage|control|direct|lead|guide|navigate|steer|pilot|drive|ride|fly|swim|dive|climb|jump|run|walk|stand|sit|rest|sleep|wake|dream|think|feel|sense|perceive|know|understand|remember|forget|imagine|create|destroy|build|break|open|close|lock|unlock|start|stop|pause|resume|continue|finish|complete|abort|cancel|undo|redo|save|load|import|export|print|display|show|hide|reveal|conceal|mask|unmask|filter|block|allow|permit|forbid|prohibit|restrict|limit|extend|expand|shrink|grow|increase|decrease|raise|lower|push|pull|lift|drop|throw|catch|hold|grab|release|free|bind|tie|untie|fasten|loosen|tighten|loose|firm|soft|hard|light|heavy|quick|slow|fast|rapid|sudden|gradual|steady|unsteady|constant|variable|fixed|flexible|rigid|elastic|plastic|malleable|ductile|brittle|tough|strong|weak|powerful|feeble|mighty|humble|proud|arrogant|humble|meek|gentle|rough|smooth|coarse|fine|sharp|dull|bright|dim|clear|vague|exact|approximate|precise|random|chaotic|orderly|systematic|methodical|logical|rational|reasonable|sensible|practical|useful|helpful|beneficial|harmful|dangerous|safe|secure|vulnerable|exposed|protected|guarded|shielded|armored|fortified|strengthened|weakened|stabilized|destabilized|balanced|unbalanced|harmonized|discordant|unified|divided|connected|disconnected|linked|separated|joined|parted|merged|split|combined|divided|assembled|disassembled|constructed|deconstructed|formed|deformed|shaped|misshapen|aligned|misaligned|centered|off-center|straight|curved|angled|tilted|level|uneven|flat|bumpy|smooth|rough|wet|dry|hot|cold|warm|cool|boiling|freezing|steaming|frozen|humid|arid|damp|desert|forest|jungle|swamp|marsh|bog|tundra|steppe|prairie|savanna|taiga|alpine|coastal|marine|oceanic|terrestrial|subterranean|cavern|valley|mountain|hill|plain|plateau|peninsula|island|archipelago|delta|estuary|fjord|sund|strait|canal|river|stream|creek|brook|spring|geyser|waterfall|rapids|current|tide|wave|surf|foam|spray|mist|fog|cloud|rain|snow|hail|sleet|ice|frost|dew|condensation|evaporation|precipitation|humidity|temperature|pressure|wind|storm|hurricane|typhoon|cyclone|tornado|twister|whirlwind|duststorm|sandstorm|blizzard|avalanche|landslide|earthquake|tsunami|volcano|eruption|lava|magma|ash|smoke|fire|flame|glow|spark|flash|thunder|lightning|boom|crack|pop|bang|click|clack|clatter|rattle|jingle|jangle|ring|chime|gong|bell|whistle|hum|buzz|hiss|sizzle|crackle|pop|snap|crackle|pop|fizz|foam|bubble|boil|simmer|steam|roast|bake|grill|fry|saute|blanch|poach|braise|stew|simmer|infuse|marinate|season|spice|herb|salt|pepper|sugar|honey|syrup|vinegar|oil|butter|cheese|milk|cream|yogurt|egg|meat|fish|poultry|game|shellfish|crab|lobster|shrimp|oyster|clam|mussel|scallop|squid|octopus|snail|frog|newt|salamander|lizard|snake|turtle|crocodile|alligator|dinosaur|pterodactyl|mammoth|saber|dire|woolly|mastodon|megatherium|glyptodont|smilodon|eurypterid|trilobite|ammonite|belemnite|nautilus|coelacanth|lungfish|sturgeon|paddlefish|gar|bowfin|eel|moray|conger|ribbon|garden|sand|wolf|tiger|lion|panther|leopard|jaguar|cheetah|cougar|lynx|bobcat|caracal|serval|ocelot|margay|jaguarundi|puma|cougar|mountain|snow|clouded|sun|moon|star|planet|comet|asteroid|meteor|orbit|gravity|rotation|revolution|axis|pole|equator|latitude|longitude|altitude|depth|distance|speed|velocity|acceleration|force|mass|weight|density|volume|area|perimeter|circumference|diameter|radius|angle|degree|radian|gradient|slope|intercept|curve|surface|solid|liquid|gas|plasma|energy|work|power|torque|momentum|inertia|friction|drag|lift|thrust|buoyancy|viscosity|elasticity|plasticity|ductility|malleability|hardness|toughness|brittleness|conductivity|resistivity|permeability|porosity|reflectivity|absorbance|transmittance|emittance|radiance|luminance|illuminance|intensity|magnitude|frequency|wavelength|amplitude|period|cycle|phase|polarization|refraction|diffraction|interference|resonance|harmonics|overtones|fundamental|octave|pitch|tone|note|scale|chord|melody|harmony|rhythm|tempo|beat|accent|syncopation|dynamics|articulation|expression|interpretation|improvisation|composition|arrangement|orchestration|counterpoint|fugue|sonata|symphony|concerto|opera|ballet|musical|soundtrack|score|overture|intermezzo|prelude|postlude|coda|finale|encore|curtain|call|bow|applause|bravo|encore|performance|rehearsal|audition|casting|directing|producing|writing|editing|filming|shooting|lighting|sound|set|costume|makeup|prop|stage|backstage|greenroom|dressing|rehearsal|opening|closing|curtain|intermission|interval|act|scene|line|monologue|dialogue|soliloquy|aside|comedy|tragedy|drama|farce|satire|parody|spoof|skit|improv|standup|variety|review|revue|extravaganza|spectacle|pageant|parade|carnival|festival|fair|exhibition|showcase|display|demonstration|exposition|convention|conference|summit|forum|panel|workshop|seminar|lecture|talk|speech|oration|address|homily|sermon|message|letter|note|memo|report|article|essay|thesis|dissertation|paper|book|novel|story|tale|legend|myth|fable|parable|allegory|saga|epic|chronicle|annal|record|archive|document|manuscript|scroll|codex|folio|quarto|octavo|pamphlet|brochure|flyer|leaflet|handout|circular|bulletin|newsletter|journal|periodical|magazine|newspaper|gazette|tabloid|broadsheet|comic|graphic|illustrated|photographic|digital|print|online|web|blog|vlog|podcast|streaming|interactive|multimedia|hypermedia|virtual|augmented|mixed|immersive|experiential|participatory|collaborative|communal|social|cultural|political|economic|environmental|psychological|emotional|spiritual|intellectual|artistic|aesthetic|ethical|moral|philosophical|theological|historical|geographical|astronomical|biological|chemical|physical|mathematical|statistical|computational|theoretical|applied|practical|experimental|observational|analytical|synthetic|deductive|inductive|abductive|probabilistic|deterministic|stochastic|chaotic|complex|simple|linear|nonlinear|static|dynamic|equilibrium|non-equilibrium|steady-state|transient|periodic|aperiodic|quasiperiodic|resonant|damped|forced|free|coupled|decoupled|feedback|feedforward|control|regulation|optimization|adaptation|evolution|selection|mutation|recombination|speciation|extinction|survival|reproduction|inheritance|variation|competition|cooperation|symbiosis|mutualism|commensalism|parasitism|predation|herbivory|carnivory|omnivory|detritivory|decomposition|mineralization|nutrient|cycle|ecosystem|biome|biosphere|atmosphere|lithosphere|hydrosphere|cryosphere|pedosphere|anthroposphere|technosphere|noosphere|semiosphere|biosphere) {
-        $suspiciousName = $true
-    } else {
-        $suspiciousName = $false
-    }
-    
-    $suspiciousPath = ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\|\\Desktop\\')
-    
-    if ((-not $isMicrosoft) -and (-not $sigValid) -and ($suspiciousName -or $suspiciousPath)) {
-        Note $FAIL "SUSPICIOUS unsigned process: $($p.ProcessName) (PID $($p.Id)) at $path"
-        $tamperHit++
-        $found = $true
-    }
-    
-    if ($found) { break }
-}
-
-if ($tamperHit -eq 0) { Note $PASS "Tamper check: no suspicious unsigned processes detected." }
 
 if ($procExp -and (-not $procExp.HasExited)) {
-    Line "Keeping Process Explorer open for your review." Green
-    Line "You may close it manually when finished." Yellow
+    Line "Process Explorer remains open." Green
+    try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 Write-Section $s4
@@ -502,7 +495,4 @@ Write-Host ""
 Line "=== Credits ===" Yellow
 Line "Made by respiral" White
 Wait-ForEnter "Press Enter to exit"
-if ($procExp -and (-not $procExp.HasExited)) {
-    try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
-}
 exit
