@@ -454,11 +454,13 @@ if ($procExp -and (-not $procExp.HasExited)) {
 }
 
 $s4 = $Results.Count
-Write-Section $s4
-$sub=$Results | Select-Object -Skip $s4
-$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
-Write-Host ""
-Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
+if ($s4 -lt $Results.Count) {
+    Write-Section $s4
+    $sub=$Results | Select-Object -Skip $s4
+    $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
+    Write-Host ""
+    Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
+}
 Wait-ForEnter
 Clear-Host
 
