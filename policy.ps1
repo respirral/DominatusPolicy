@@ -104,6 +104,10 @@ function Fast-SigValid { param([string]$Path)
     $SigCache[$Path] = $ok
     return $ok
 }
+function Fast-SigMicrosoft { param([string]$Path)
+    if (-not $Path) { return $false }
+    try { $s = Get-AuthenticodeSignature -FilePath $Path -ErrorAction SilentlyContinue; return ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -match 'Microsoft') } catch { return $false }
+}
 
 $Results = New-Object System.Collections.Generic.List[object]
 function Note { param([string]$State,[string]$Text) $Results.Add([pscustomobject]@{State=$State;Text=$Text}) }
@@ -139,14 +143,19 @@ $CheatList = @(
     'fivem.exe',
     'crack.exe',
     'noclip.exe',
-    'flyhack.exe'
+    'flyhack.exe',
+    'modmenu.exe',
+    'radar.exe',
+    'glow.exe',
+    'bhop.exe',
+    'silentaim.exe'
 )
 
 function Is-Cheat { param([string]$P)
     if (-not $P) { return $false }
     $leaf = try { (Split-Path $P -Leaf).ToLower() } catch { $P.ToLower() }
     foreach ($f in $CheatList){
-        if ($leaf -eq $f -or $leaf -match 'cheat|inject|hack|aim|esp|wall|cham|trigger|fly|noclip') {
+        if ($leaf -eq $f -or $leaf -match 'cheat|inject|hack|aim|esp|wall|cham|trigger|fly|noclip|loader|modmenu|radar|glow|bhop|silent') {
             return $true
         }
     }
@@ -244,40 +253,29 @@ Line "Step 2 of 3: Process Explorer - Live Cheat Scan" White
 Line "INSTRUCTION: Launching Process Explorer and scanning for cheats" Yellow
 Write-Host ""
 
-# Auto-launch Process Explorer
-$procexpPaths = @(
-    "C:\Program Files\Process Explorer\procexp.exe",
-    "C:\Program Files (x86)\Process Explorer\procexp.exe",
-    "C:\Windows\System32\procexp.exe",
-    "procexp.exe"
-)
+# Auto-download Process Explorer to temp
+$tempProcexp = "$env:TEMP\procexp.exe"
+$downloadUrl = "https://live.sysinternals.com/tools/procexp.exe"
 
-$launched = $false
-foreach ($p in $procexpPaths) {
+if (-not (Test-Path $tempProcexp)) {
+    Line "📥 Downloading Process Explorer from Microsoft..." Yellow
     try {
-        if (Test-Path $p -ErrorAction SilentlyContinue) {
-            Start-Process -FilePath $p -WindowStyle Normal -ErrorAction SilentlyContinue
-            $launched = $true
-            Line "✅ Process Explorer launched from: $p" Green
-            break
-        }
-    } catch {}
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempProcexp -UseBasicParsing -ErrorAction Stop
+        Line "✅ Downloaded to: $tempProcexp" Green
+    } catch {
+        Line "❌ Download failed: $_" Red
+        Line "   Manually download from: https://docs.microsoft.com/en-us/sysinternals/downloads/process-explorer" Yellow
+    }
 }
 
-if (-not $launched) {
-    try {
-        Start-Process -FilePath "procexp.exe" -WindowStyle Normal -ErrorAction SilentlyContinue
-        $launched = $true
-        Line "✅ Process Explorer launched from PATH" Green
-    } catch {}
+if (Test-Path $tempProcexp) {
+    Start-Process -FilePath $tempProcexp -WindowStyle Normal
+    Line "✅ Process Explorer launched from temp" Green
+} else {
+    Line "⚠️ Process Explorer not available. Skipping auto-launch." Yellow
 }
 
-if (-not $launched) {
-    Line "⚠️ Process Explorer not found. Please download from Sysinternals." Yellow
-    Line "   Install path: C:\Program Files\Process Explorer\procexp.exe" Yellow
-}
-
-Start-Sleep -Seconds 1
+Start-Sleep -Seconds 2
 Line "🔍 Scanning running processes for cheats..." Yellow
 $s2=$Results.Count
 
@@ -299,9 +297,8 @@ try {
             Note $FAIL "CHEAT PROCESS FOUND: $($proc.ProcessName) (PID $($proc.Id))"
         }
         
-        # Check for unsigned cheat-like names even if not in list
         $leaf = try { (Split-Path $nm -Leaf).ToLower() } catch { $nm.ToLower() }
-        if ($leaf -match 'cheat|inject|hack|aim|esp|wall|cham|trigger|fly|noclip|loader|modmenu|radar|glow|bhop') {
+        if ($leaf -match 'cheat|inject|hack|aim|esp|wall|cham|trigger|fly|noclip|loader|modmenu|radar|glow|bhop|silent') {
             $flagHit++
             $cheatProcs += "$($proc.ProcessName) (PID $($proc.Id))"
             Note $FAIL "SUSPICIOUS PROCESS: $($proc.ProcessName) (PID $($proc.Id))"
@@ -339,8 +336,7 @@ $cheatDirs = @(
     "C:\Users\Public"
 )
 
-$cheatExtensions = @('.exe', '.dll', '.sys', '.bin')
-$cheatPatterns = @('cheat', 'inject', 'hack', 'aim', 'esp', 'wall', 'cham', 'trigger', 'fly', 'noclip', 'loader', 'modmenu', 'radar', 'glow', 'bhop', 'spectre')
+$cheatPatterns = @('cheat', 'inject', 'hack', 'aim', 'esp', 'wall', 'cham', 'trigger', 'fly', 'noclip', 'loader', 'modmenu', 'radar', 'glow', 'bhop', 'silent', 'spectre')
 
 $foundCheats = 0
 $fileCount = 0
@@ -401,4 +397,7 @@ Write-Host ""
 Line "=== Credits ===" Yellow
 Line "Made by stayvague" White
 Wait-ForEnter "Press Enter to exit"
+
+# Cleanup temp procexp after exit
+Remove-Item "$env:TEMP\procexp.exe" -Force -ErrorAction SilentlyContinue
 exit
