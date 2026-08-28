@@ -426,7 +426,7 @@ if ($procExpPath -and (Test-Path $procExpPath)) {
         $procExp = Start-Process -FilePath $procExpPath -PassThru -ErrorAction Stop
         Line "Process Explorer opened successfully (PID: $($procExp.Id))" Green
         Line ""
-        Wait-ForEnter "Press Enter to continue"
+        Wait-ForEnter "Press Enter to finish"
         Note $PASS "Process Explorer opened and visual inspection performed."
     } catch {
         Line "Failed to start Process Explorer." Red
@@ -435,10 +435,6 @@ if ($procExpPath -and (Test-Path $procExpPath)) {
 } else {
     Line "Process Explorer executable not found after download." Red
     Note $WARN "Process Explorer download failed."
-}
-
-if ($procExp -and (-not $procExp.HasExited)) {
-    try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 
 Clear-Host
