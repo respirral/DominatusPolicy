@@ -408,19 +408,7 @@ try {
         Line "Download failed. Please download manually from Sysinternals." Red
         Wait-ForEnter
         Clear-Host
-        Line "=== Final Result ===" Yellow
-        Write-Host ""
-        $tot=$Results.Count
-        $p=@($Results|Where-Object{$_.State -eq 'Pass'}).Count
-        $w=@($Results|Where-Object{$_.State -eq 'Unsure'}).Count
-        $f=@($Results|Where-Object{$_.State -eq 'Fail'}).Count
-        Line ("Passed:  $p / $tot") Green
-        Line ("Unsure:  $w / $tot") Yellow
-        Line ("Failed:  $f / $tot") Red
-        Write-Host ""
-        if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
-        elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
-        else { Line "VERDICT: PASS" Green }
+        Line "=== Roman Recording Policy - Complete ===" Yellow
         Write-Host ""
         Line "=== Credits ===" Yellow
         Line "Made by respiral" White
@@ -453,30 +441,8 @@ if ($procExp -and (-not $procExp.HasExited)) {
     try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 
-$s4 = $Results.Count
-if ($s4 -lt $Results.Count) {
-    Write-Section $s4
-    $sub=$Results | Select-Object -Skip $s4
-    $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
-    Write-Host ""
-    Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
-}
-Wait-ForEnter
 Clear-Host
-
-Line "=== Final Result ===" Yellow
-Write-Host ""
-$tot=$Results.Count
-$p=@($Results|Where-Object{$_.State -eq 'Pass'}).Count
-$w=@($Results|Where-Object{$_.State -eq 'Unsure'}).Count
-$f=@($Results|Where-Object{$_.State -eq 'Fail'}).Count
-Line ("Passed:  $p / $tot") Green
-Line ("Unsure:  $w / $tot") Yellow
-Line ("Failed:  $f / $tot") Red
-Write-Host ""
-if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
-elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
-else { Line "VERDICT: PASS" Green }
+Line "=== Roman Recording Policy - Complete ===" Yellow
 Write-Host ""
 Line "=== Credits ===" Yellow
 Line "Made by respiral" White
