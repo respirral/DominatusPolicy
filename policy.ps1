@@ -381,7 +381,7 @@ Wait-ForEnter
 Clear-Host
 
 Line "Step 4 of 4: Tamper Check" White
-Line "INSTRUCTION: Process Explorer will be downloaded and opened for visual inspection" Yellow
+Line "INSTRUCTION: Process Explorer will be downloaded and opened" Yellow
 Write-Host ""
 
 $tempDir = Join-Path $env:TEMP "ProcessExplorer"
@@ -400,17 +400,13 @@ Show-DownloadBar
 $webClient = New-Object System.Net.WebClient
 try {
     $webClient.DownloadFile($downloadUrl, $procExp64Exe)
-    Line "Download complete: $procExp64Exe" Green
+    Line "Download complete." Green
 } catch {
     try {
         $webClient.DownloadFile($downloadUrlZip, $procExpZip)
         Line "Downloaded zip. Extracting..." Yellow
         Expand-Archive -Path $procExpZip -DestinationPath $tempDir -Force
-        if (Test-Path $procExpExe) {
-            Line "Extracted: $procExpExe" Green
-        } elseif (Test-Path $procExp64Exe) {
-            Line "Extracted: $procExp64Exe" Green
-        }
+        Line "Extraction complete." Green
     } catch {
         Line "Download failed. Please download manually from Sysinternals." Red
         Wait-ForEnter
@@ -445,16 +441,7 @@ if ($procExpPath -and (Test-Path $procExpPath)) {
         $procExp = Start-Process -FilePath $procExpPath -PassThru -ErrorAction Stop
         Line "Process Explorer opened successfully (PID: $($procExp.Id))" Green
         Line ""
-        Line "INSTRUCTION: Visually inspect running processes in Process Explorer" White
-        Line "Look for:" White
-        Line "  - Unsigned executables (not Microsoft signed)" Yellow
-        Line "  - Processes running from temp, downloads, appdata folders" Yellow
-        Line "  - Processes with suspicious names (random strings, misspellings)" Yellow
-        Line "  - Processes with no company name or description" Yellow
-        Line "  - Processes with high CPU or memory usage" Yellow
-        Line ""
-        Line "Press Enter when you have finished reviewing processes." Yellow
-        Wait-ForEnter "Press Enter to continue"
+        Wait-ForEnter "Press Enter after reviewing processes"
         Note $PASS "Process Explorer opened and visual inspection performed."
     } catch {
         Line "Failed to start Process Explorer." Red
@@ -466,7 +453,6 @@ if ($procExpPath -and (Test-Path $procExpPath)) {
 }
 
 if ($procExp -and (-not $procExp.HasExited)) {
-    Line "Process Explorer remains open." Green
     try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 
