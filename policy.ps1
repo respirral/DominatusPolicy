@@ -88,14 +88,6 @@ function Show-LoadingBar {
     }
     Write-Host ""; Write-Host ""
 }
-function Show-LoadingBarFast {
-    for ($i=0; $i -le 10; $i++){
-        $bar = "#"*$i + "-"*(10-$i)
-        Write-Host -NoNewline ("`rProgress: [ $bar ] {0}% " -f ($i*10)) -ForegroundColor White
-        Start-Sleep -Milliseconds 50
-    }
-    Write-Host ""; Write-Host ""
-}
 function Wait-ForEnter {
     param([string]$Message = "Press Enter to Continue")
     Start-Sleep -Seconds 1
@@ -132,13 +124,13 @@ function Write-Section {
     }
 }
 
-$Flagged = @('spectre.exe','software.exe','tiworker.exe','loader.exe','injector.exe','bamparser.exe','svhost.exe','csrss32.exe','mimikatz.exe','meterpreter.exe','cobaltstrike.exe','beacon.exe','payload.exe','backdoor.exe','rat.exe','keylogger.exe','spy.exe','trojan.exe','virus.exe','worm.exe','rootkit.exe','stealer.exe','cryptominer.exe','ransomware.exe','exploit.exe')
+$Flagged = @('spectre.exe','software.exe','tiworker.exe','loader.exe','injector.exe','bamparser.exe','svhost.exe','csrss32.exe')
 
 function Test-Flagged { param([string]$P)
     if (-not $P) { return $false }
     $leaf = try { (Split-Path $P -Leaf).ToLower() } catch { $P.ToLower() }
     foreach ($f in $Flagged){
-        if ($leaf -eq $f -or $leaf -like "*$f" -or $leaf -like "$f*"){
+        if ($leaf -eq $f){
             if ($f -eq 'tiworker.exe'){
                 if (-not (Test-Path $P -ErrorAction SilentlyContinue)){ return $false }
                 if (Fast-SigMicrosoft $P){ return $false }
@@ -244,56 +236,11 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-Line "Step 2 of 4: Tamper Check (Process Explorer)" White
-Line "INSTRUCTION: Open Process Explorer manually and reach 100% success" Yellow
-Write-Host ""
-Line "Opening Process Explorer..." Cyan
-Start-Process "procexp.exe" -ErrorAction SilentlyContinue -WindowStyle Normal
-Start-Sleep -Seconds 2
-Line "Process Explorer opened. Verify running processes manually." Cyan
-Line "Press Enter when ready to start automated tamper check (5 seconds max)..." Yellow
-Wait-ForEnter "Press Enter to start tamper check"
-$s2=$Results.Count
-
-$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-$timeout = 5000
-$virusHit = 0
-$procChecked = 0
-
-while ($stopwatch.ElapsedMilliseconds -lt $timeout) {
-    $procs = Get-Process -ErrorAction SilentlyContinue
-    $procChecked = $procs.Count
-    foreach ($p in $procs) {
-        $path = $null
-        try { $path = $p.MainModule.FileName } catch { $path = $null }
-        $nm = if ($path) { $path } else { "$($p.ProcessName).exe" }
-        if (Test-Flagged $nm) {
-            $virusHit++
-            Note $FAIL "HIGH VIRUS FLAG: Process $($p.ProcessName) (PID $($p.Id)) at $(if($path){"$path"}else{'[path hidden]'})"
-        }
-    }
-    Start-Sleep -Milliseconds 200
-}
-$stopwatch.Stop()
-
-if ($virusHit -eq 0) {
-    Note $PASS "Tamper check: $procChecked processes scanned, zero flagged."
-} else {
-    Note $FAIL "Tamper check found $virusHit flagged processes."
-}
-Write-Section $s2
-$sub=$Results | Select-Object -Skip $s2
-$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
-Write-Host ""
-Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
-Wait-ForEnter
-Clear-Host
-
-Line "Step 3 of 4: Persistence, Storage & Traces" White
+Line "Step 2 of 4: Persistence, Storage & Traces" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-Show-LoadingBarFast
-$s3=$Results.Count
+Show-LoadingBar
+$s2=$Results.Count
 
 try {
     $usn = & fsutil usn queryjournal C: 2>&1
@@ -353,47 +300,37 @@ try {
     if ($rHit -eq 0){ Note $PASS "Recycle Bin: $($rb.Count) items, none flagged." }
 } catch { Note $WARN "Recycle Bin could not enumerate." }
 
-Write-Section $s3
-$sub=$Results | Select-Object -Skip $s3
+Write-Section $s2
+$sub=$Results | Select-Object -Skip $s2
 $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
 Write-Host ""
 Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
 Wait-ForEnter
 Clear-Host
 
-Line "Step 4 of 4: Live System & Defence Integrity" White
-Line "INSTRUCTION: Reach 100% success (max 15 seconds)" Yellow
+Line "Step 3 of 4: Live System & Defence Integrity" White
+Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-Show-LoadingBarFast
-$s4=$Results.Count
-$timeoutFast = $true
+Show-LoadingBar
+$s3=$Results.Count
 
 $pHit=0; $pN=0; $userProcs=@()
-$procScanStop = [System.Diagnostics.Stopwatch]::StartNew()
-$procTimeout = 15000
-$procsDone = $false
-while ($procScanStop.ElapsedMilliseconds -lt $procTimeout -and -not $procsDone) {
-    $procs = Get-Process -ErrorAction SilentlyContinue
-    $pN = $procs.Count
-    foreach ($proc in $procs) {
-        $path=$null
-        try { $path = $proc.MainModule.FileName } catch { $path=$null }
-        $nm = if ($path){ $path } else { "$($proc.ProcessName).exe" }
-        if (Test-Flagged $nm){ $pHit++; Note $FAIL "Process flagged LIVE -> $($proc.ProcessName) (PID $($proc.Id)) $(if($path){"at $path"}else{'[path hidden]'})" }
-        if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')){ $userProcs += $path }
-    }
-    $procsDone = $true
-    break
+$procScanStart = Get-Date
+foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)){
+    $pN++; $path=$null
+    try { $path = $proc.MainModule.FileName } catch { $path=$null }
+    $nm = if ($path){ $path } else { "$($proc.ProcessName).exe" }
+    if (Test-Flagged $nm){ $pHit++; Note $FAIL "Process flagged LIVE -> $($proc.ProcessName) (PID $($proc.Id)) $(if($path){"at $path"}else{'[path hidden]'})" }
+    if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')){ $userProcs += $path }
+    if ((Get-Date) - $procScanStart -gt [TimeSpan]::FromSeconds(15)) { break }
 }
-$procScanStop.Stop()
 if ($pHit -eq 0){ Note $PASS "Processes: $pN running, none flagged." }
 
 $uHit=0
-$userProcs = $userProcs | Select-Object -Unique
-foreach ($up in $userProcs){ if (-not (Fast-SigValid $up)){ $uHit++; Note $WARN "Process unsigned binary from user space -> $up" } }
+foreach ($up in ($userProcs | Select-Object -Unique)){ if (-not (Fast-SigValid $up)){ $uHit++; Note $WARN "Process unsigned binary from user space -> $up" } }
 if ($uHit -eq 0){ Note $PASS "Processes: none unsigned from temp/user dirs." }
 
-Line "Verifying Windows system files (fast mode)..." Yellow
+Line "Verifying Windows system files (this can take a minute)..." Yellow
 try {
     $sfc = & sfc /verifyonly 2>&1 | Out-String
     if ($sfc -match 'did not find any integrity violations'){ Note $PASS "System files: SFC found no integrity violations." }
@@ -445,6 +382,74 @@ try {
     if ($dHit -eq 0){ Note $PASS "Drivers: $($drv.Count) running, all validly signed." }
 } catch { Note $WARN "Drivers enumeration failed." }
 
+Write-Section $s3
+$sub=$Results | Select-Object -Skip $s3
+$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
+Write-Host ""
+Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
+Wait-ForEnter
+Clear-Host
+
+Line "Step 4 of 4: Tamper Check" White
+Line "INSTRUCTION: Open Process Explorer, then press Enter to start tamper check" Yellow
+Write-Host ""
+Line "Launching Process Explorer..." White
+try {
+    $procExp = Start-Process -FilePath "procexp.exe" -PassThru -ErrorAction Stop
+} catch {
+    try {
+        $procExp = Start-Process -FilePath "procexp64.exe" -PassThru -ErrorAction Stop
+    } catch {
+        Line "Process Explorer not found in PATH. Please download from Sysinternals." Red
+        Wait-ForEnter
+        Clear-Host
+        Line "=== Final Result ===" Yellow
+        Write-Host ""
+        $tot=$Results.Count
+        $p=@($Results|Where-Object{$_.State -eq 'Pass'}).Count
+        $w=@($Results|Where-Object{$_.State -eq 'Unsure'}).Count
+        $f=@($Results|Where-Object{$_.State -eq 'Fail'}).Count
+        Line ("Passed:  $p / $tot") Green
+        Line ("Unsure:  $w / $tot") Yellow
+        Line ("Failed:  $f / $tot") Red
+        Write-Host ""
+        if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
+        elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
+        else { Line "VERDICT: PASS" Green }
+        Write-Host ""
+        Line "=== Credits ===" Yellow
+        Line "Made by stayvague" White
+        Wait-ForEnter "Press Enter to exit"
+        exit
+    }
+}
+Line "Process Explorer opened. Please review running processes." White
+Wait-ForEnter "Press Enter to start tamper check (5 seconds max)"
+$s4=$Results.Count
+
+$tamperHit=0
+$tamperScanStart = Get-Date
+Line "Scanning for high-virus flagged processes..." Yellow
+while ((Get-Date) - $tamperScanStart -lt [TimeSpan]::FromSeconds(5)) {
+    $procs = Get-Process -ErrorAction SilentlyContinue
+    $found = $false
+    foreach ($p in $procs) {
+        $pname = $p.ProcessName.ToLower()
+        if ($pname -match 'virus|trojan|malware|ransom|worm|rootkit|backdoor|keylog|spy|exploit|dropper|inject|packer|crypt|miner|stealer|phish|scam|hack|rat|bot|shell|cmd|powershell.*-enc|-e.*|wscript.*\.vbs|cscript.*\.js|regsvr32.*-s|rundll32.*\.dll|mshta.*\.hta|installer.*-silent') {
+            Note $FAIL "SUSPICIOUS process detected: $($p.ProcessName) (PID $($p.Id))"
+            $tamperHit++
+            $found = $true
+        }
+    }
+    if ($found) { break }
+    Start-Sleep -Milliseconds 200
+}
+if ($tamperHit -eq 0) { Note $PASS "Tamper check: no high-virus flagged processes detected." }
+
+if ($procExp -and (-not $procExp.HasExited)) {
+    try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
+}
+
 Write-Section $s4
 $sub=$Results | Select-Object -Skip $s4
 $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
@@ -463,21 +468,11 @@ Line ("Passed:  $p / $tot") Green
 Line ("Unsure:  $w / $tot") Yellow
 Line ("Failed:  $f / $tot") Red
 Write-Host ""
-if ($f -gt 0) {
-    Line "VERDICT: FAIL" Red
-    Write-Host ""
-    foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})) {
-        Line ("  - " + $r.Text) Red
-    }
-} elseif ($w -gt 0) {
-    Line "VERDICT: UNSURE" Yellow
-    Write-Host ""
-    foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})) {
-        Line ("  - " + $r.Text) Yellow
-    }
-} else {
-    Line "VERDICT: PASS" Green
-}
+if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
+elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
+else { Line "VERDICT: PASS" Green }
 Write-Host ""
-Line "Press Enter to exit..." Yellow
-Read-Host
+Line "=== Credits ===" Yellow
+Line "Made by stayvague" White
+Wait-ForEnter "Press Enter to exit"
+exit
