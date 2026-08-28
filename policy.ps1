@@ -463,5 +463,21 @@ Line ("Passed:  $p / $tot") Green
 Line ("Unsure:  $w / $tot") Yellow
 Line ("Failed:  $f / $tot") Red
 Write-Host ""
-if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
-elseif ($w -gt 0){ Line "VERDICT:
+if ($f -gt 0) {
+    Line "VERDICT: FAIL" Red
+    Write-Host ""
+    foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})) {
+        Line ("  - " + $r.Text) Red
+    }
+} elseif ($w -gt 0) {
+    Line "VERDICT: UNSURE" Yellow
+    Write-Host ""
+    foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})) {
+        Line ("  - " + $r.Text) Yellow
+    }
+} else {
+    Line "VERDICT: PASS" Green
+}
+Write-Host ""
+Line "Press Enter to exit..." Yellow
+Read-Host
