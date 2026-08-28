@@ -453,6 +453,7 @@ if ($procExp -and (-not $procExp.HasExited)) {
     try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
 }
 
+$s4 = $Results.Count
 Write-Section $s4
 $sub=$Results | Select-Object -Skip $s4
 $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
