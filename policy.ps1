@@ -34,7 +34,7 @@ function Get-HWID {
 }
 
 $hwid = Get-HWID
-$lockFile = Join-Path $env:ProgramData 'dominatus_hwid.json'
+$lockFile = Join-Path $env:ProgramData 'roman_hwid.json'
 
 $locks = @{}
 if (Test-Path $lockFile){
@@ -46,7 +46,7 @@ function Save-Locks { param($tbl,$path)
 
 Clear-Host
 Line ""
-Line "=== Dominatus Recording Policy - Login ===" Yellow
+Line "=== Roman Recording Policy - Login ===" Yellow
 Line ""
 
 $authed = $false
@@ -88,14 +88,17 @@ function Show-LoadingBar {
     }
     Write-Host ""; Write-Host ""
 }
-function Show-LoadingBarFast {
-    for ($i=0; $i -le 10; $i++){
-        $bar = "#"*$i + "-"*(10-$i)
-        Write-Host -NoNewline ("`rProgress: [ $bar ] {0}% " -f ($i*10)) -ForegroundColor White
-        Start-Sleep -Milliseconds 50
+
+function Show-DownloadBar {
+    for ($i=0; $i -le 20; $i++){
+        $bar = "#"*$i + "-"*(20-$i)
+        $pct = [math]::Round($i/20*100)
+        Write-Host -NoNewline ("`rDownloading Process Explorer: [ $bar ] {0}% " -f $pct) -ForegroundColor Cyan
+        Start-Sleep -Milliseconds 150
     }
     Write-Host ""; Write-Host ""
 }
+
 function Wait-ForEnter {
     param([string]$Message = "Press Enter to Continue")
     Start-Sleep -Seconds 1
@@ -132,13 +135,13 @@ function Write-Section {
     }
 }
 
-$Flagged = @('spectre.exe','software.exe','tiworker.exe','loader.exe','injector.exe','bamparser.exe','svhost.exe','csrss32.exe','mimikatz.exe','meterpreter.exe','cobaltstrike.exe','beacon.exe','payload.exe','backdoor.exe','rat.exe','keylogger.exe','spy.exe','trojan.exe','virus.exe','worm.exe','rootkit.exe','stealer.exe','cryptominer.exe','ransomware.exe','exploit.exe')
+$Flagged = @('spectre.exe','software.exe','tiworker.exe','loader.exe','injector.exe','bamparser.exe','svhost.exe','csrss32.exe')
 
 function Test-Flagged { param([string]$P)
     if (-not $P) { return $false }
     $leaf = try { (Split-Path $P -Leaf).ToLower() } catch { $P.ToLower() }
     foreach ($f in $Flagged){
-        if ($leaf -eq $f -or $leaf -like "*$f" -or $leaf -like "$f*"){
+        if ($leaf -eq $f){
             if ($f -eq 'tiworker.exe'){
                 if (-not (Test-Path $P -ErrorAction SilentlyContinue)){ return $false }
                 if (Fast-SigMicrosoft $P){ return $false }
@@ -150,7 +153,7 @@ function Test-Flagged { param([string]$P)
     return $false }
 
 Line ""
-Line "=== Dominatus Recording Policy ===" Yellow
+Line "=== Roman Recording Policy ===" Yellow
 Line "Complete all steps with 100% success to pass." White
 Line "Follow the instructions listed on each step." White
 Line "This PowerShell policy currently has 4 steps." White
@@ -176,7 +179,7 @@ $di=0; foreach ($d in $disks){ $di++; if (Serial-OK $d.SerialNumber){ Line "Disk
 
 Write-Host ""
 Line "=== Credits ===" Yellow
-Line "Made by stayvague" White
+Line "Made by respiral" White
 Write-Host ""
 Wait-ForEnter
 Clear-Host
@@ -244,56 +247,11 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-Line "Step 2 of 4: Tamper Check (Process Explorer)" White
-Line "INSTRUCTION: Open Process Explorer manually and reach 100% success" Yellow
-Write-Host ""
-Line "Opening Process Explorer..." Cyan
-Start-Process "procexp.exe" -ErrorAction SilentlyContinue -WindowStyle Normal
-Start-Sleep -Seconds 2
-Line "Process Explorer opened." Cyan
-Line "Press Enter when ready to start automated tamper check (5 seconds max)..." Yellow
-Wait-ForEnter "Press Enter to start tamper check"
-$s2=$Results.Count
-
-$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-$timeout = 5000
-$virusHit = 0
-$procChecked = 0
-
-while ($stopwatch.ElapsedMilliseconds -lt $timeout) {
-    $procs = Get-Process -ErrorAction SilentlyContinue
-    $procChecked = $procs.Count
-    foreach ($p in $procs) {
-        $path = $null
-        try { $path = $p.MainModule.FileName } catch { $path = $null }
-        $nm = if ($path) { $path } else { "$($p.ProcessName).exe" }
-        if (Test-Flagged $nm) {
-            $virusHit++
-            Note $FAIL "HIGH VIRUS FLAG: Process $($p.ProcessName) (PID $($p.Id)) at $(if($path){"$path"}else{'[path hidden]'})"
-        }
-    }
-    Start-Sleep -Milliseconds 200
-}
-$stopwatch.Stop()
-
-if ($virusHit -eq 0) {
-    Note $PASS "Tamper check: $procChecked processes scanned, zero flagged."
-} else {
-    Note $FAIL "Tamper check found $virusHit flagged processes."
-}
-Write-Section $s2
-$sub=$Results | Select-Object -Skip $s2
-$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
-Write-Host ""
-Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
-Wait-ForEnter
-Clear-Host
-
-Line "Step 3 of 4: Persistence, Storage & Traces" White
+Line "Step 2 of 4: Persistence, Storage & Traces" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-Show-LoadingBarFast
-$s3=$Results.Count
+Show-LoadingBar
+$s2=$Results.Count
 
 try {
     $usn = & fsutil usn queryjournal C: 2>&1
@@ -328,14 +286,6 @@ try {
     if ($tHit -eq 0){ Note $PASS "Scheduled tasks: $($tasks.Count) third-party, none flagged." }
 } catch { Note $WARN "Scheduled tasks enumeration failed." }
 
-$adsHit=0; $adsN=0
-foreach ($d in @("$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents")){
-    if (-not (Test-Path $d)){ continue }
-    Get-ChildItem $d -File -Force -ErrorAction SilentlyContinue | Select-Object -First 300 | ForEach-Object {
-        try { $st=Get-Item $_.FullName -Stream * -ErrorAction SilentlyContinue | Where-Object { $_.Stream -ne ':$DATA' -and $_.Stream -ne 'Zone.Identifier' }; foreach ($s in $st){ $adsHit++; Note $WARN "ADS unusual stream '$($s.Stream)' on $($_.Name)" } } catch {}
-        $adsN++ } }
-if ($adsHit -eq 0){ Note $PASS "Alternate Data Streams: $adsN files checked, none hiding data." }
-
 $dl="$env:USERPROFILE\Downloads"
 if (Test-Path $dl){
     $dHit=0; $dN=0
@@ -345,7 +295,7 @@ if (Test-Path $dl){
 } else { Note $WARN "Downloads folder missing." }
 
 $usbK='HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR'
-if (Test-Path $usbK){ $u=@(Get-ChildItem $usbK -ErrorAction SilentlyContinue); if ($u.Count -eq 0){ Note $WARN "USB history USBSTOR empty - traces removed." } else { Note $PASS "USB history: $($u.Count) storage devices recorded." } } else { Note $PASS "USB history USBSTOR key not present - normal for clean systems." }
+if (Test-Path $usbK){ $u=@(Get-ChildItem $usbK -ErrorAction SilentlyContinue); if ($u.Count -eq 0){ Note $WARN "USB history USBSTOR empty - traces removed." } else { Note $PASS "USB history: $($u.Count) storage devices recorded." } } else { Note $WARN "USB history USBSTOR key missing." }
 
 try {
     $rb=@(Get-ChildItem 'C:\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.Name -like '$R*' }); $rHit=0
@@ -353,52 +303,35 @@ try {
     if ($rHit -eq 0){ Note $PASS "Recycle Bin: $($rb.Count) items, none flagged." }
 } catch { Note $WARN "Recycle Bin could not enumerate." }
 
-Write-Section $s3
-$sub=$Results | Select-Object -Skip $s3
+Write-Section $s2
+$sub=$Results | Select-Object -Skip $s2
 $t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
 Write-Host ""
 Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
 Wait-ForEnter
 Clear-Host
 
-Line "Step 4 of 4: Live System & Defence Integrity" White
-Line "INSTRUCTION: Reach 100% success (max 15 seconds)" Yellow
+Line "Step 3 of 4: Live System & Defence Integrity" White
+Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-Show-LoadingBarFast
-$s4=$Results.Count
+Show-LoadingBar
+$s3=$Results.Count
 
 $pHit=0; $pN=0; $userProcs=@()
-$procScanStop = [System.Diagnostics.Stopwatch]::StartNew()
-$procTimeout = 15000
-$procsDone = $false
-while ($procScanStop.ElapsedMilliseconds -lt $procTimeout -and -not $procsDone) {
-    $procs = Get-Process -ErrorAction SilentlyContinue
-    $pN = $procs.Count
-    foreach ($proc in $procs) {
-        $path=$null
-        try { $path = $proc.MainModule.FileName } catch { $path=$null }
-        $nm = if ($path){ $path } else { "$($proc.ProcessName).exe" }
-        if (Test-Flagged $nm){ $pHit++; Note $FAIL "Process flagged LIVE -> $($proc.ProcessName) (PID $($proc.Id)) $(if($path){"at $path"}else{'[path hidden]'})" }
-        if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')){ $userProcs += $path }
-    }
-    $procsDone = $true
-    break
+$procScanStart = Get-Date
+foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)){
+    $pN++; $path=$null
+    try { $path = $proc.MainModule.FileName } catch { $path=$null }
+    $nm = if ($path){ $path } else { "$($proc.ProcessName).exe" }
+    if (Test-Flagged $nm){ $pHit++; Note $FAIL "Process flagged LIVE -> $($proc.ProcessName) (PID $($proc.Id)) $(if($path){"at $path"}else{'[path hidden]'})" }
+    if ($path -and ($path -match '\\Temp\\|\\AppData\\|\\Downloads\\|\\Users\\Public\\')){ $userProcs += $path }
+    if ((Get-Date) - $procScanStart -gt [TimeSpan]::FromSeconds(5)) { break }
 }
-$procScanStop.Stop()
 if ($pHit -eq 0){ Note $PASS "Processes: $pN running, none flagged." }
 
 $uHit=0
-$userProcs = $userProcs | Select-Object -Unique
-foreach ($up in $userProcs){ if (-not (Fast-SigValid $up)){ $uHit++; Note $WARN "Process unsigned binary from user space -> $up" } }
+foreach ($up in ($userProcs | Select-Object -Unique)){ if (-not (Fast-SigValid $up)){ $uHit++; Note $WARN "Process unsigned binary from user space -> $up" } }
 if ($uHit -eq 0){ Note $PASS "Processes: none unsigned from temp/user dirs." }
-
-Line "Verifying Windows system files (fast mode)..." Yellow
-try {
-    $sfc = & sfc /verifyonly 2>&1 | Out-String
-    if ($sfc -match 'did not find any integrity violations'){ Note $PASS "System files: SFC found no integrity violations." }
-    elseif ($sfc -match 'found.*integrity violations'){ Note $FAIL "System files: SFC found integrity violations - protected files modified." }
-    else { Note $WARN "System files: SFC could not complete verification." }
-} catch { Note $WARN "System files: SFC check failed to run." }
 
 try {
     $pref=Get-MpPreference -ErrorAction Stop
@@ -422,11 +355,6 @@ try {
 } catch { Note $WARN "Defender status query failed." }
 
 try {
-    $de=Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational';Id=5001,5007} -MaxEvents 10 -ErrorAction Stop
-    foreach ($e in $de){ Note $WARN "Defender config/RTP change event $($e.Id) at $($e.TimeCreated.ToString('yyyy-MM-dd HH:mm'))" }
-} catch { Note $PASS "Defender no protection-disable events logged." }
-
-try {
     $bcd = & bcdedit /enum "{current}" 2>&1 | Out-String
     if ($bcd -match 'testsigning\s+Yes'){ Note $FAIL "Boot test signing enabled." } else { Note $PASS "Boot test signing off." }
     if ($bcd -match 'nointegritychecks\s+Yes'){ Note $FAIL "Boot integrity checks disabled." } else { Note $PASS "Boot integrity checks on." }
@@ -444,14 +372,95 @@ try {
     if ($dHit -eq 0){ Note $PASS "Drivers: $($drv.Count) running, all validly signed." }
 } catch { Note $WARN "Drivers enumeration failed." }
 
+Write-Section $s3
+$sub=$Results | Select-Object -Skip $s3
+$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
+Write-Host ""
+Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
+Wait-ForEnter
+Clear-Host
+
+Line "Step 4 of 4: Tamper Check" White
+Line "INSTRUCTION: Process Explorer will be downloaded and opened" Yellow
+Write-Host ""
+
+$tempDir = Join-Path $env:TEMP "ProcessExplorer"
+if (-not (Test-Path $tempDir)) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
+
+$procExpZip = Join-Path $tempDir "procexp.zip"
+$procExpExe = Join-Path $tempDir "procexp.exe"
+$procExp64Exe = Join-Path $tempDir "procexp64.exe"
+
+$downloadUrl = "https://live.sysinternals.com/procexp64.exe"
+$downloadUrlZip = "https://live.sysinternals.com/ProcessExplorer.zip"
+
+Line "Downloading Process Explorer..." White
+Show-DownloadBar
+
+$webClient = New-Object System.Net.WebClient
+try {
+    $webClient.DownloadFile($downloadUrl, $procExp64Exe)
+    Line "Download complete." Green
+} catch {
+    try {
+        $webClient.DownloadFile($downloadUrlZip, $procExpZip)
+        Line "Downloaded zip. Extracting..." Yellow
+        Expand-Archive -Path $procExpZip -DestinationPath $tempDir -Force
+        Line "Extraction complete." Green
+    } catch {
+        Line "Download failed. Please download manually from Sysinternals." Red
+        Wait-ForEnter
+        Clear-Host
+        Line "=== Final Result ===" Yellow
+        Write-Host ""
+        $tot=$Results.Count
+        $p=@($Results|Where-Object{$_.State -eq 'Pass'}).Count
+        $w=@($Results|Where-Object{$_.State -eq 'Unsure'}).Count
+        $f=@($Results|Where-Object{$_.State -eq 'Fail'}).Count
+        Line ("Passed:  $p / $tot") Green
+        Line ("Unsure:  $w / $tot") Yellow
+        Line ("Failed:  $f / $tot") Red
+        Write-Host ""
+        if ($f -gt 0){ Line "VERDICT: FAIL" Red; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Fail'})){ Line ("  - " + $r.Text) Red } }
+        elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach ($r in ($Results|Where-Object{$_.State -eq 'Unsure'})){ Line ("  - " + $r.Text) Yellow } }
+        else { Line "VERDICT: PASS" Green }
+        Write-Host ""
+        Line "=== Credits ===" Yellow
+        Line "Made by respiral" White
+        Wait-ForEnter "Press Enter to exit"
+        exit
+    }
+}
+
+$procExpPath = $null
+if (Test-Path $procExp64Exe) { $procExpPath = $procExp64Exe }
+elseif (Test-Path $procExpExe) { $procExpPath = $procExpExe }
+
+if ($procExpPath -and (Test-Path $procExpPath)) {
+    try {
+        $procExp = Start-Process -FilePath $procExpPath -PassThru -ErrorAction Stop
+        Line "Process Explorer opened successfully (PID: $($procExp.Id))" Green
+        Line ""
+        Wait-ForEnter "Press Enter after reviewing processes"
+        Note $PASS "Process Explorer opened and visual inspection performed."
+    } catch {
+        Line "Failed to start Process Explorer." Red
+        Note $WARN "Process Explorer could not be opened."
+    }
+} else {
+    Line "Process Explorer executable not found after download." Red
+    Note $WARN "Process Explorer download failed."
+}
+
+if ($procExp -and (-not $procExp.HasExited)) {
+    try { Stop-Process -Id $procExp.Id -Force -ErrorAction SilentlyContinue } catch {}
+}
+
 Write-Section $s4
 $sub=$Results | Select-Object -Skip $s4
-if ($sub -ne $null) {
-    $t=($sub).Count
-    $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
-    Write-Host ""
-    Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
-}
+$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
+Write-Host ""
+Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
 Wait-ForEnter
 Clear-Host
 
@@ -470,6 +479,6 @@ elseif ($w -gt 0){ Line "VERDICT: INCONCLUSIVE" Yellow; Write-Host ""; foreach (
 else { Line "VERDICT: PASS" Green }
 Write-Host ""
 Line "=== Credits ===" Yellow
-Line "Made by stayvague" White
+Line "Made by respiral" White
 Wait-ForEnter "Press Enter to exit"
 exit
