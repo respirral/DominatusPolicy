@@ -124,7 +124,20 @@ function Write-Section {
     }
 }
 
-$Flagged = @('spectre.exe','software.exe','tiworker.exe','loader.exe','injector.exe','bamparser.exe','svhost.exe','csrss32.exe','mimikatz.exe','procdump.exe','wireshark.exe','netcat.exe','nc.exe','plink.exe','putty.exe','cain.exe','abel.exe','x64.exe')
+# ============================================================
+# CHEAT-ONLY FLAGGED LIST (removed nc.exe, plink.exe, putty.exe, wireshark, netcat, procdump, etc.)
+# ============================================================
+$Flagged = @(
+    'spectre.exe',
+    'software.exe',
+    'tiworker.exe',
+    'loader.exe',
+    'injector.exe',
+    'bamparser.exe',
+    'svhost.exe',
+    'csrss32.exe',
+    'mimikatz.exe'
+)
 
 function Test-Flagged { param([string]$P)
     if (-not $P) { return $false }
@@ -240,9 +253,9 @@ Wait-ForEnter
 Clear-Host
 
 # ============================================================
-# STEP 2: Persistence, Storage & Traces
+# STEP 2: Persistence, Storage & Traces (REMOVED STARTUP APP SCANNING)
 # ============================================================
-Line "Step 2 of 4: Persistence, Storage & Traces" White
+Line "Step 2 of 4: Storage & Traces" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
 Show-LoadingBar
@@ -258,28 +271,6 @@ foreach ($pair in @(@('Security',1102),@('System',104))){
     try { $ev=Get-WinEvent -FilterHashtable @{LogName=$pair[0];Id=$pair[1]} -MaxEvents 5 -ErrorAction Stop; foreach ($e in $ev){ Note $FAIL "Event log '$($pair[0])' CLEARED at $($e.TimeCreated.ToString('yyyy-MM-dd HH:mm'))" } }
     catch { Note $PASS "Event log: no clear events in '$($pair[0])'." }
 }
-
-$runKeys=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce')
-$arHit=0; $arN=0
-foreach ($k in $runKeys){
-    if (-not (Test-Path $k)){ continue }
-    $p=Get-ItemProperty $k -ErrorAction SilentlyContinue; if (-not $p){ continue }
-    $p.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { $arN++; $v="$($_.Value)"
-        if (Test-Flagged $v){ $arHit++; Note $FAIL "Autorun flagged entry '$($_.Name)' -> $v" }
-        else { $exe = if ($v -match '"([^"]+\.exe)"'){$matches[1]} elseif ($v -match '([A-Za-z]:\\[^ ]+\.exe)'){$matches[1]} else {$null}
-            if ($exe -and (Test-Path $exe)){ if (-not (Fast-SigValid $exe)){ $arHit++; Note $WARN "Autorun unsigned startup '$($_.Name)' -> $exe" } } } } }
-if ($arHit -eq 0){ Note $PASS "Autoruns: $arN Run/RunOnce entries, all clean." }
-
-$stHit=0
-foreach ($d in @("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup","$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup")){
-    if (Test-Path $d){ Get-ChildItem $d -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer } | ForEach-Object { if (Test-Flagged $_.Name){ $stHit++; Note $FAIL "Startup folder flagged -> $($_.FullName)" } } } }
-if ($stHit -eq 0){ Note $PASS "Startup folders clean." }
-
-try {
-    $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskPath -notlike '\Microsoft\*' -and $_.State -ne 'Disabled' }); $tHit=0
-    foreach ($t in $tasks){ foreach ($a in ($t.Actions|Where-Object{$_.Execute})){ if (Test-Flagged $a.Execute){ $tHit++; Note $FAIL "Task '$($t.TaskName)' runs flagged -> $($a.Execute)" } } }
-    if ($tHit -eq 0){ Note $PASS "Scheduled tasks: $($tasks.Count) third-party, none flagged." }
-} catch { Note $WARN "Scheduled tasks enumeration failed." }
 
 $adsHit=0; $adsN=0
 foreach ($d in @("$env:USERPROFILE\Downloads","$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents")){
@@ -315,7 +306,7 @@ Wait-ForEnter
 Clear-Host
 
 # ============================================================
-# STEP 3: BAM & Amcache - High Entropy / Flagged Check
+# STEP 3: BAM & Amcache - Deep Scan (KEPT AS-IS)
 # ============================================================
 Line "Step 3 of 4: BAM & Amcache - Deep Scan" White
 Line "INSTRUCTION: Complete scan of BAM, Amcache, and artifacts" Yellow
@@ -422,7 +413,7 @@ Wait-ForEnter
 Clear-Host
 
 # ============================================================
-# STEP 4: Tamper Check - Process Explorer Scan
+# STEP 4: Tamper Check - AUTO DOWNLOAD + LAUNCH Process Explorer
 # ============================================================
 Line "Step 4 of 4: Tamper Check" White
 Line "INSTRUCTION: Downloading & scanning with Process Explorer" Yellow
