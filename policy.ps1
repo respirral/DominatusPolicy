@@ -294,9 +294,6 @@ if (Test-Path $dl){
     if ($dHit -eq 0){ Note $PASS "Downloads: $dN files, none flagged." }
 } else { Note $WARN "Downloads folder missing." }
 
-$usbK='HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR'
-if (Test-Path $usbK){ $u=@(Get-ChildItem $usbK -ErrorAction SilentlyContinue); if ($u.Count -eq 0){ Note $WARN "USB history USBSTOR empty - traces removed." } else { Note $PASS "USB history: $($u.Count) storage devices recorded." } } else { Note $WARN "USB history USBSTOR key missing." }
-
 try {
     $rb=@(Get-ChildItem 'C:\$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer -and $_.Name -like '$R*' }); $rHit=0
     foreach ($x in $rb){ if (Test-Flagged $x.Name){ $rHit++; Note $FAIL "Recycle Bin flagged deleted file -> $($x.Name)" } }
@@ -441,7 +438,7 @@ if ($procExpPath -and (Test-Path $procExpPath)) {
         $procExp = Start-Process -FilePath $procExpPath -PassThru -ErrorAction Stop
         Line "Process Explorer opened successfully (PID: $($procExp.Id))" Green
         Line ""
-        Wait-ForEnter "Press Enter after reviewing processes"
+        Wait-ForEnter "Press Enter to continue"
         Note $PASS "Process Explorer opened and visual inspection performed."
     } catch {
         Line "Failed to start Process Explorer." Red
