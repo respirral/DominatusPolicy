@@ -386,11 +386,10 @@ $s4=$Results.Count
 # ESP is matched only as its own word (not inside "response", "respawn", "despawn", etc.)
 # but still catches "ESP=1", "esp_enabled", "[ESP]", "ESPEnabled". Aimbot is matched anywhere, any case.
 $cfgPattern = '(?<![A-Za-z])[Ee][Ss][Pp](?![a-z])|(?i:aimbot)'
-$cfgBudgetSec = 10
 
-# Multi-threaded file walker: searches every fixed drive for .cfg files and checks their text,
-# stopping at the time limit. Read-only.
-if (-not ('RomanCfgScan2' -as [type])) {
+# Multi-threaded file walker: searches every fixed drive for .cfg files and checks their text.
+# Runs until the whole PC has been searched. Read-only.
+if (-not ('RomanCfgScan3' -as [type])) {
     try {
         Add-Type -ErrorAction Stop -TypeDefinition @'
 using System;
@@ -400,22 +399,19 @@ using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
 
-public static class RomanCfgScan2 {
+public static class RomanCfgScan3 {
     static ConcurrentStack<DirectoryInfo> work;
     static ConcurrentBag<string> hits;
     static Regex rx;
     static HashSet<string> skipPaths;
     static HashSet<string> skipNames;
     static Thread[] threads;
-    static DateTime deadline;
     static int busy;
     static long dirs;
-    static long cfgs;
-    static int timedOut;
+    static long queued;
 
     public static long DirsScanned { get { return Interlocked.Read(ref dirs); } }
-    public static long CfgChecked { get { return Interlocked.Read(ref cfgs); } }
-    public static bool TimedOut { get { return Interlocked.CompareExchange(ref timedOut, 0, 0) == 1; } }
+    public static long DirsQueued { get { return Interlocked.Read(ref queued); } }
 
     public static bool IsDone {
         get {
@@ -431,15 +427,14 @@ public static class RomanCfgScan2 {
         return a;
     }
 
-    public static void Start(string[] roots, string pattern, int budgetMs, string[] skipPathList, string[] skipNameList) {
+    public static void Start(string[] roots, string pattern, string[] skipPathList, string[] skipNameList) {
         work = new ConcurrentStack<DirectoryInfo>();
         hits = new ConcurrentBag<string>();
         rx = new Regex(pattern, RegexOptions.Compiled);
         skipPaths = new HashSet<string>(skipPathList, StringComparer.OrdinalIgnoreCase);
         skipNames = new HashSet<string>(skipNameList, StringComparer.OrdinalIgnoreCase);
-        busy = 0; dirs = 0; cfgs = 0; timedOut = 0;
-        deadline = DateTime.UtcNow.AddMilliseconds(budgetMs);
-        foreach (string r in roots) { try { work.Push(new DirectoryInfo(r)); } catch { } }
+        busy = 0; dirs = 0; queued = 0;
+        foreach (string r in roots) { try { work.Push(new DirectoryInfo(r)); Interlocked.Increment(ref queued); } catch { } }
         int n = Math.Max(4, Math.Min(32, Environment.ProcessorCount * 2));
         threads = new Thread[n];
         for (int i = 0; i < n; i++) {
@@ -449,14 +444,8 @@ public static class RomanCfgScan2 {
         }
     }
 
-    static bool OutOfTime() {
-        if (DateTime.UtcNow > deadline) { Interlocked.Exchange(ref timedOut, 1); return true; }
-        return false;
-    }
-
     static void Worker() {
         while (true) {
-            if (OutOfTime()) return;
             Interlocked.Increment(ref busy);
             DirectoryInfo dir;
             if (!work.TryPop(out dir)) {
@@ -465,6 +454,7 @@ public static class RomanCfgScan2 {
                 Thread.Sleep(1);
                 continue;
             }
+            Interlocked.Decrement(ref queued);
             try { Scan(dir); } catch { }
             Interlocked.Decrement(ref busy);
         }
@@ -474,9 +464,7 @@ public static class RomanCfgScan2 {
         Interlocked.Increment(ref dirs);
         try {
             foreach (FileInfo f in dir.EnumerateFiles("*.cfg")) {
-                if (OutOfTime()) return;
                 if (!f.Name.EndsWith(".cfg", StringComparison.OrdinalIgnoreCase)) continue;
-                Interlocked.Increment(ref cfgs);
                 if (Check(f)) hits.Add(f.FullName);
             }
         } catch { }
@@ -485,6 +473,7 @@ public static class RomanCfgScan2 {
                 if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue;
                 if (skipNames.Contains(d.Name) || skipPaths.Contains(d.FullName)) continue;
                 work.Push(d);
+                Interlocked.Increment(ref queued);
             }
         } catch { }
     }
@@ -503,37 +492,37 @@ public static class RomanCfgScan2 {
     } catch { }
 }
 
-function Show-CfgProgress { param([int]$Pct)
+function Show-PcSearchProgress { param([int]$Pct)
     $filled = [int][math]::Floor($Pct / 5)
     $bar = "#"*$filled + "-"*(20-$filled)
-    $msg = "`rSearching for .cfg files: [ $bar ] {0}%  | {1:N0} folders | {2:N0} .cfg files checked" -f $Pct, [RomanCfgScan2]::DirsScanned, [RomanCfgScan2]::CfgChecked
-    Write-Host -NoNewline ($msg.PadRight(110)) -ForegroundColor Cyan
+    $msg = "`rSearching PC: [ $bar ] {0}%  | {1:N0} folders" -f $Pct, [RomanCfgScan3]::DirsScanned
+    Write-Host -NoNewline ($msg.PadRight(80)) -ForegroundColor Cyan
 }
 
-if ('RomanCfgScan2' -as [type]) {
+if ('RomanCfgScan3' -as [type]) {
     $roots = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { $_.RootDirectory.FullName })
     # Huge Windows component stores that never hold user configs (skipped for speed).
     $skipPaths = @('WinSxS','Installer','servicing','SoftwareDistribution','assembly','Microsoft.NET','System32\DriverStore') | ForEach-Object { Join-Path $env:SystemRoot $_ }
     $skipNames = @('System Volume Information','node_modules','.git')
 
-    [RomanCfgScan2]::Start([string[]]$roots, $cfgPattern, $cfgBudgetSec * 1000, [string[]]$skipPaths, [string[]]$skipNames)
-    $cfgSw = [Diagnostics.Stopwatch]::StartNew()
-    while (-not [RomanCfgScan2]::IsDone -and $cfgSw.Elapsed.TotalSeconds -lt ($cfgBudgetSec + 2)) {
-        Show-CfgProgress ([math]::Min(99, [int]($cfgSw.Elapsed.TotalSeconds / $cfgBudgetSec * 100)))
+    [RomanCfgScan3]::Start([string[]]$roots, $cfgPattern, [string[]]$skipPaths, [string[]]$skipNames)
+    # Percentage = folders searched vs. folders found so far; it never goes backwards.
+    $pcPct = 0
+    while (-not [RomanCfgScan3]::IsDone) {
+        $done = [RomanCfgScan3]::DirsScanned; $left = [RomanCfgScan3]::DirsQueued
+        $est = if (($done + $left) -gt 0) { [int][math]::Floor($done / ($done + $left) * 100) } else { 0 }
+        $pcPct = [math]::Min(99, [math]::Max($pcPct, $est))
+        Show-PcSearchProgress $pcPct
         Start-Sleep -Milliseconds 100
     }
-    Show-CfgProgress 100
+    Show-PcSearchProgress 100
     Write-Host ""; Write-Host ""
 
-    $cfgHits = @([RomanCfgScan2]::Results())
+    $cfgHits = @([RomanCfgScan3]::Results())
     foreach ($h in $cfgHits){ Note $FAIL "$([IO.Path]::GetFileName($h)) has been found." }
-    if ([RomanCfgScan2]::TimedOut){
-        Note $WARN ("Live PC Search: stopped at the {0} second limit ({1:N0} folders searched)." -f $cfgBudgetSec, [RomanCfgScan2]::DirsScanned)
-    } elseif ($cfgHits.Count -eq 0){
-        Note $PASS "Live PC Search: no flagged .cfg files."
-    }
+    if ($cfgHits.Count -eq 0){ Note $PASS "Live PC Search: no flagged .cfg files." }
 } else {
-    Note $WARN "Live PC Search: search engine could not start."
+    Note $WARN "Live PC Search: search could not start."
 }
 
 Write-Section $s4
