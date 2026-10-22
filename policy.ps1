@@ -387,24 +387,31 @@ $s4=$Results.Count
 # ESP is matched only as its own word (not inside "response", "respawn", "despawn", etc.)
 # but still catches "ESP=1", "esp_enabled", "[ESP]", "ESPEnabled". Aimbot is matched anywhere, any case.
 $cfgPattern = '(?<![A-Za-z])[Ee][Ss][Pp](?![a-z])|(?i:aimbot)'
-$cfgRoot = $env:APPDATA
-$cfgN=0; $cfgHit=0
-if ($cfgRoot -and (Test-Path $cfgRoot)){
+# Find the signed-in user's profile, not the admin account the script was elevated with.
+$profileDir = $null
+try {
+    $loggedOn = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+    if ($loggedOn){
+        $sid = (New-Object System.Security.Principal.NTAccount($loggedOn)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $profileDir = (Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction Stop).LocalPath
+    }
+} catch { $profileDir = $null }
+if (-not $profileDir -or -not (Test-Path $profileDir)){ $profileDir = $env:USERPROFILE }
+
+# Whole AppData folder (C:\Users\<user>\AppData): Local, LocalLow and Roaming.
+$cfgRoot = Join-Path $profileDir 'AppData'
+$cfgHit=0
+if (Test-Path $cfgRoot){
     $cfgFiles = @(Get-ChildItem -Path $cfgRoot -Recurse -Filter *.cfg -File -Force -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -eq '.cfg' -and $_.Length -le 10MB })
     foreach ($cf in $cfgFiles){
-        $cfgN++
-        $hits = @(Select-String -LiteralPath $cf.FullName -Pattern $cfgPattern -CaseSensitive -AllMatches -ErrorAction SilentlyContinue)
-        if ($hits.Count -gt 0){
+        if (Select-String -LiteralPath $cf.FullName -Pattern $cfgPattern -CaseSensitive -Quiet -ErrorAction SilentlyContinue){
             $cfgHit++
-            $words = (@($hits | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value.ToUpper() } | Sort-Object -Unique)) -join ', '
-            $first = $hits[0]
-            $snip = "$($first.Line)".Trim(); if ($snip.Length -gt 80){ $snip = $snip.Substring(0,80) + '...' }
-            Note $FAIL "Config '$($cf.FullName)' contains [$words] - $($hits.Count) line(s), first at line $($first.LineNumber): $snip [modified $($cf.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))]"
+            Note $FAIL "$($cf.Name) has been found."
         }
     }
-    if ($cfgHit -eq 0){ Note $PASS "Live PC Search: $cfgN .cfg file(s) in AppData scanned, no keywords found." }
-} else { Note $WARN "Live PC Search: AppData folder not found." }
+    if ($cfgHit -eq 0){ Note $PASS "Live PC Search: no flagged .cfg files." }
+} else { Note $WARN "Live PC Search: $cfgRoot not found." }
 
 Write-Section $s4
 $sub=$Results | Select-Object -Skip $s4
