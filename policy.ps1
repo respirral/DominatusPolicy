@@ -156,7 +156,7 @@ Line ""
 Line "=== Roman Recording Policy ===" Yellow
 Line "Complete all steps with 100% success to pass." White
 Line "Follow the instructions listed on each step." White
-Line "This PowerShell policy currently has 4 steps." White
+Line "This PowerShell policy currently has 5 steps." White
 Write-Host ""
 
 $os=Get-CimInstance Win32_OperatingSystem
@@ -184,7 +184,7 @@ Write-Host ""
 Wait-ForEnter
 Clear-Host
 
-Line "Step 1 of 4: Execution History" White
+Line "Step 1 of 5: Execution History" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
 Show-LoadingBar
@@ -247,7 +247,7 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-Line "Step 2 of 4: Persistence, Storage & Traces" White
+Line "Step 2 of 5: Persistence, Storage & Traces" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
 Show-LoadingBar
@@ -308,7 +308,7 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-Line "Step 3 of 4: Live System & Defence Integrity" White
+Line "Step 3 of 5: Live System & Defence Integrity" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
 Show-LoadingBar
@@ -377,7 +377,44 @@ Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*1
 Wait-ForEnter
 Clear-Host
 
-Line "Step 4 of 4: Tamper Check" White
+Line "Step 4 of 5: Live PC Search" White
+Line "INSTRUCTION: Reach 100% success" Yellow
+Write-Host ""
+Show-LoadingBar
+$s4=$Results.Count
+
+# Keywords: ESP and Aimbot.
+# ESP is matched only as its own word (not inside "response", "respawn", "despawn", etc.)
+# but still catches "ESP=1", "esp_enabled", "[ESP]", "ESPEnabled". Aimbot is matched anywhere, any case.
+$cfgPattern = '(?<![A-Za-z])[Ee][Ss][Pp](?![a-z])|(?i:aimbot)'
+$cfgRoot = $env:APPDATA
+$cfgN=0; $cfgHit=0
+if ($cfgRoot -and (Test-Path $cfgRoot)){
+    $cfgFiles = @(Get-ChildItem -Path $cfgRoot -Recurse -Filter *.cfg -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -eq '.cfg' -and $_.Length -le 10MB })
+    foreach ($cf in $cfgFiles){
+        $cfgN++
+        $hits = @(Select-String -LiteralPath $cf.FullName -Pattern $cfgPattern -CaseSensitive -AllMatches -ErrorAction SilentlyContinue)
+        if ($hits.Count -gt 0){
+            $cfgHit++
+            $words = (@($hits | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value.ToUpper() } | Sort-Object -Unique)) -join ', '
+            $first = $hits[0]
+            $snip = "$($first.Line)".Trim(); if ($snip.Length -gt 80){ $snip = $snip.Substring(0,80) + '...' }
+            Note $FAIL "Config '$($cf.FullName)' contains [$words] - $($hits.Count) line(s), first at line $($first.LineNumber): $snip [modified $($cf.LastWriteTime.ToString('yyyy-MM-dd HH:mm'))]"
+        }
+    }
+    if ($cfgHit -eq 0){ Note $PASS "Live PC Search: $cfgN .cfg file(s) in AppData scanned, no keywords found." }
+} else { Note $WARN "Live PC Search: AppData folder not found." }
+
+Write-Section $s4
+$sub=$Results | Select-Object -Skip $s4
+$t=($sub).Count; $ok=@($sub|Where-Object{$_.State -eq 'Pass'}).Count
+Write-Host ""
+Line ("Success Rate: {0}% ($ok / $t)" -f $([math]::Round($ok/[math]::Max($t,1)*100,0))) $(if($ok -eq $t){'Green'}else{'Red'})
+Wait-ForEnter
+Clear-Host
+
+Line "Step 5 of 5: Tamper Check" White
 Line "INSTRUCTION: Process Explorer will be downloaded and opened" Yellow
 Write-Host ""
 
