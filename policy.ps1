@@ -24,7 +24,6 @@ $Users['owner']    = 'unknown'
 $Users['dieshire'] = 'daddy'
 $Users['cearful']  = 'son'
 $Users['villian']  = 'yeah'
-$Users['legit']  = 'bois'
 
 function Get-HWID {
     try { $u = (Get-CimInstance Win32_ComputerSystemProduct -ErrorAction Stop).UUID } catch { $u = $null }
@@ -381,38 +380,161 @@ Clear-Host
 Line "Step 4 of 5: Live PC Search" White
 Line "INSTRUCTION: Reach 100% success" Yellow
 Write-Host ""
-Show-LoadingBar
 $s4=$Results.Count
 
 # Keywords: ESP and Aimbot.
 # ESP is matched only as its own word (not inside "response", "respawn", "despawn", etc.)
 # but still catches "ESP=1", "esp_enabled", "[ESP]", "ESPEnabled". Aimbot is matched anywhere, any case.
 $cfgPattern = '(?<![A-Za-z])[Ee][Ss][Pp](?![a-z])|(?i:aimbot)'
-# Find the signed-in user's profile, not the admin account the script was elevated with.
-$profileDir = $null
-try {
-    $loggedOn = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
-    if ($loggedOn){
-        $sid = (New-Object System.Security.Principal.NTAccount($loggedOn)).Translate([System.Security.Principal.SecurityIdentifier]).Value
-        $profileDir = (Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction Stop).LocalPath
-    }
-} catch { $profileDir = $null }
-if (-not $profileDir -or -not (Test-Path $profileDir)){ $profileDir = $env:USERPROFILE }
+$cfgBudgetSec = 10
 
-# Whole AppData folder (C:\Users\<user>\AppData): Local, LocalLow and Roaming.
-$cfgRoot = Join-Path $profileDir 'AppData'
-$cfgHit=0
-if (Test-Path $cfgRoot){
-    $cfgFiles = @(Get-ChildItem -Path $cfgRoot -Recurse -Filter *.cfg -File -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -eq '.cfg' -and $_.Length -le 10MB })
-    foreach ($cf in $cfgFiles){
-        if (Select-String -LiteralPath $cf.FullName -Pattern $cfgPattern -CaseSensitive -Quiet -ErrorAction SilentlyContinue){
-            $cfgHit++
-            Note $FAIL "$($cf.Name) has been found."
+# Multi-threaded file walker: searches every fixed drive for .cfg files and checks their text,
+# stopping at the time limit. Read-only.
+if (-not ('RomanCfgScan2' -as [type])) {
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading;
+
+public static class RomanCfgScan2 {
+    static ConcurrentStack<DirectoryInfo> work;
+    static ConcurrentBag<string> hits;
+    static Regex rx;
+    static HashSet<string> skipPaths;
+    static HashSet<string> skipNames;
+    static Thread[] threads;
+    static DateTime deadline;
+    static int busy;
+    static long dirs;
+    static long cfgs;
+    static int timedOut;
+
+    public static long DirsScanned { get { return Interlocked.Read(ref dirs); } }
+    public static long CfgChecked { get { return Interlocked.Read(ref cfgs); } }
+    public static bool TimedOut { get { return Interlocked.CompareExchange(ref timedOut, 0, 0) == 1; } }
+
+    public static bool IsDone {
+        get {
+            if (threads == null) return true;
+            foreach (Thread t in threads) { if (t.IsAlive) return false; }
+            return true;
         }
     }
-    if ($cfgHit -eq 0){ Note $PASS "Live PC Search: no flagged .cfg files." }
-} else { Note $WARN "Live PC Search: $cfgRoot not found." }
+
+    public static string[] Results() {
+        string[] a = hits.ToArray();
+        Array.Sort(a, StringComparer.OrdinalIgnoreCase);
+        return a;
+    }
+
+    public static void Start(string[] roots, string pattern, int budgetMs, string[] skipPathList, string[] skipNameList) {
+        work = new ConcurrentStack<DirectoryInfo>();
+        hits = new ConcurrentBag<string>();
+        rx = new Regex(pattern, RegexOptions.Compiled);
+        skipPaths = new HashSet<string>(skipPathList, StringComparer.OrdinalIgnoreCase);
+        skipNames = new HashSet<string>(skipNameList, StringComparer.OrdinalIgnoreCase);
+        busy = 0; dirs = 0; cfgs = 0; timedOut = 0;
+        deadline = DateTime.UtcNow.AddMilliseconds(budgetMs);
+        foreach (string r in roots) { try { work.Push(new DirectoryInfo(r)); } catch { } }
+        int n = Math.Max(4, Math.Min(32, Environment.ProcessorCount * 2));
+        threads = new Thread[n];
+        for (int i = 0; i < n; i++) {
+            threads[i] = new Thread(Worker);
+            threads[i].IsBackground = true;
+            threads[i].Start();
+        }
+    }
+
+    static bool OutOfTime() {
+        if (DateTime.UtcNow > deadline) { Interlocked.Exchange(ref timedOut, 1); return true; }
+        return false;
+    }
+
+    static void Worker() {
+        while (true) {
+            if (OutOfTime()) return;
+            Interlocked.Increment(ref busy);
+            DirectoryInfo dir;
+            if (!work.TryPop(out dir)) {
+                Interlocked.Decrement(ref busy);
+                if (Interlocked.CompareExchange(ref busy, 0, 0) == 0 && work.IsEmpty) return;
+                Thread.Sleep(1);
+                continue;
+            }
+            try { Scan(dir); } catch { }
+            Interlocked.Decrement(ref busy);
+        }
+    }
+
+    static void Scan(DirectoryInfo dir) {
+        Interlocked.Increment(ref dirs);
+        try {
+            foreach (FileInfo f in dir.EnumerateFiles("*.cfg")) {
+                if (OutOfTime()) return;
+                if (!f.Name.EndsWith(".cfg", StringComparison.OrdinalIgnoreCase)) continue;
+                Interlocked.Increment(ref cfgs);
+                if (Check(f)) hits.Add(f.FullName);
+            }
+        } catch { }
+        try {
+            foreach (DirectoryInfo d in dir.EnumerateDirectories()) {
+                if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                if (skipNames.Contains(d.Name) || skipPaths.Contains(d.FullName)) continue;
+                work.Push(d);
+            }
+        } catch { }
+    }
+
+    static bool Check(FileInfo f) {
+        try {
+            if (f.Length <= 0 || f.Length > 10L * 1024 * 1024) return false;
+            using (FileStream fs = new FileStream(f.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (StreamReader sr = new StreamReader(fs, true)) {
+                return rx.IsMatch(sr.ReadToEnd());
+            }
+        } catch { return false; }
+    }
+}
+'@
+    } catch { }
+}
+
+function Show-CfgProgress { param([int]$Pct)
+    $filled = [int][math]::Floor($Pct / 5)
+    $bar = "#"*$filled + "-"*(20-$filled)
+    $msg = "`rSearching for .cfg files: [ $bar ] {0}%  | {1:N0} folders | {2:N0} .cfg files checked" -f $Pct, [RomanCfgScan2]::DirsScanned, [RomanCfgScan2]::CfgChecked
+    Write-Host -NoNewline ($msg.PadRight(110)) -ForegroundColor Cyan
+}
+
+if ('RomanCfgScan2' -as [type]) {
+    $roots = @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady } | ForEach-Object { $_.RootDirectory.FullName })
+    # Huge Windows component stores that never hold user configs (skipped for speed).
+    $skipPaths = @('WinSxS','Installer','servicing','SoftwareDistribution','assembly','Microsoft.NET','System32\DriverStore') | ForEach-Object { Join-Path $env:SystemRoot $_ }
+    $skipNames = @('System Volume Information','node_modules','.git')
+
+    [RomanCfgScan2]::Start([string[]]$roots, $cfgPattern, $cfgBudgetSec * 1000, [string[]]$skipPaths, [string[]]$skipNames)
+    $cfgSw = [Diagnostics.Stopwatch]::StartNew()
+    while (-not [RomanCfgScan2]::IsDone -and $cfgSw.Elapsed.TotalSeconds -lt ($cfgBudgetSec + 2)) {
+        Show-CfgProgress ([math]::Min(99, [int]($cfgSw.Elapsed.TotalSeconds / $cfgBudgetSec * 100)))
+        Start-Sleep -Milliseconds 100
+    }
+    Show-CfgProgress 100
+    Write-Host ""; Write-Host ""
+
+    $cfgHits = @([RomanCfgScan2]::Results())
+    foreach ($h in $cfgHits){ Note $FAIL "$([IO.Path]::GetFileName($h)) has been found." }
+    if ([RomanCfgScan2]::TimedOut){
+        Note $WARN ("Live PC Search: stopped at the {0} second limit ({1:N0} folders searched)." -f $cfgBudgetSec, [RomanCfgScan2]::DirsScanned)
+    } elseif ($cfgHits.Count -eq 0){
+        Note $PASS "Live PC Search: no flagged .cfg files."
+    }
+} else {
+    Note $WARN "Live PC Search: search engine could not start."
+}
 
 Write-Section $s4
 $sub=$Results | Select-Object -Skip $s4
